@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>통합 캔버스 샘플 — 파트너 정산 상세 조회</title>
+<meta name="canvas-updated-at" content="2026-08-12T17:47:49+09:00">
+<style>
+  :root {
+    --border: #e5e7eb;
+    --border-strong: #d2d6db;
+    --bg-soft: #f9fafb;
+    --text-900: #111927;
+    --text-700: #384250;
+    --text-600: #4d5761;
+    --text-500: #6c737f;
+    --blue: #2e90fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 0 24px 80px;
+    line-height: 1.6;
+    color: #1c1f24;
+  }
+  h1 { font-size: 22px; border-bottom: 2px solid #1c1f24; padding-bottom: 12px; }
+  h2 {
+    font-size: 17px;
+    margin-top: 48px;
+    padding: 8px 12px;
+    background: var(--bg-soft);
+    border-left: 4px solid var(--blue);
+  }
+  .meta { color: var(--text-500); font-size: 13px; margin-bottom: 16px; }
+  table.spec { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.spec th, table.spec td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.spec th { background: var(--bg-soft); width: 140px; }
+  ul.ref-list { list-style: disc; margin: 8px 0 0 20px; padding: 0; font-size: 14px; color: var(--text-700); }
+  ul.ref-list li { margin-bottom: 6px; }
+  ul.ref-list a { color: var(--blue); }
+  h3.epic-group {
+    font-size: 14px; margin: 24px 0 8px; color: var(--text-900);
+    font-family: "SF Mono", Menlo, monospace; font-weight: 600;
+  }
+  h3.epic-group .kr { font-family: inherit; font-weight: 400; color: var(--text-600); }
+  ul.story-list { padding-left: 20px; }
+  ul.story-list li { margin-bottom: 12px; font-size: 14px; color: var(--text-700); }
+  ul.story-list .story-name { display: block; font-weight: 600; color: var(--text-900); margin-bottom: 2px; }
+  ul.story-list .gwt { margin: 4px 0 0; padding-left: 16px; }
+  ul.story-list .gwt li { margin-bottom: 4px; font-size: 13px; }
+  ul.story-list .gwt b { color: var(--text-900); font-weight: 600; }
+  /* 동작 순서 — GWT를 쉬운 말로 다시 쓴 블록(one-canvas-rule.md 「동작 순서」) */
+  .story-steps { margin: 8px 0 0; padding: 10px 12px; background: var(--bg-soft);
+    border-left: 3px solid var(--border-strong); border-radius: 0 6px 6px 0; }
+  .story-steps h5 { margin: 0 0 6px; font-size: 12px; font-weight: 700; color: var(--text-600); }
+  .story-steps .steps-case { margin: 8px 0 3px; font-size: 12px; font-weight: 600; color: var(--text-600); }
+  .story-steps .steps-case:first-of-type { margin-top: 0; }
+  .story-steps ol { margin: 0; padding-left: 18px; }
+  .story-steps ol li { margin-bottom: 3px; font-size: 13px; color: var(--text-700); }
+  /* ===== 우측 플로팅 UI 디스크립션 패널 =====
+     디스크립션은 유형에 따라 자리가 갈린다(one-canvas-rule.md 「디스크립션 유형과 위치」).
+       · 화면설명(.screen-note)      — 로직·정책. 화면 아래에 그대로 보인다.
+       · UI 디스크립션(.screen-desc) — 번호별 영역·컴포넌트. 여기서 숨기고 우측 패널이 복제해 띄운다.
+     패널은 .screen-desc 만 복제한다 — .screen-note 까지 복제하면 화면설명이 두 번 나온다. */
+  .screen-desc { display: none; }
+
+  .desc-panel {
+    position: fixed; top: 72px; right: 20px; z-index: 40;
+    width: 320px; max-height: calc(100vh - 110px);
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border-strong); border-radius: 10px;
+    background: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.10);
+  }
+  .desc-panel__head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-bottom: 1px solid var(--border);
+    background: var(--bg-soft); border-radius: 9px 9px 0 0;
+  }
+  .desc-panel.collapsed .desc-panel__head { border-bottom: none; border-radius: 9px; }
+  .desc-panel__label { font-size: 11.5px; font-weight: 700; color: var(--text-700); letter-spacing: .03em; }
+  .desc-panel__screen {
+    flex: 1; min-width: 0; font-size: 11px; color: var(--text-500);
+    font-family: "SF Mono", Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .desc-panel__toggle {
+    flex: 0 0 auto; border: 1px solid var(--border-strong); background: #fff;
+    cursor: pointer; font-size: 11px; color: var(--text-600);
+    border-radius: 6px; padding: 2px 8px; line-height: 1.5;
+  }
+  .desc-panel__body { padding: 14px; overflow-y: auto; overflow-wrap: anywhere; }
+  /* 패널 폭이 좁으므로 태그·스토리북 경로가 잘리지 않고 줄바꿈되게 한다.
+     .pair 가 inline-flex 라 자식이 min-width:auto 로 안 줄어드는 문제를 함께 푼다. */
+  .desc-panel__body .desc-legend li { min-width: 0; }
+  .desc-panel__body .desc-legend li > div { min-width: 0; flex: 1 1 auto; }
+  .desc-panel__body .tag-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .desc-panel__body .tag-row .pair { display: block; max-width: 100%; min-width: 0; }
+  .desc-panel__body .tag-row .pair > * { min-width: 0; max-width: 100%; }
+  .desc-panel__body code { white-space: normal; overflow-wrap: anywhere; }
+  .desc-panel.collapsed .desc-panel__body { display: none; }
+  .desc-panel__body .screen-desc { display: block; border: none; border-radius: 0; padding: 0; background: none; margin: 0; }
+  .desc-panel__body .screen-desc h4 { margin-bottom: 10px; }
+
+  /* ===== 컴포넌트 태깅 병기 (상세형) — UI 디스크립션 안에만 둔다 =====
+     컴포넌트명 + 스토리북 위치를 쌍으로 적는다. 스토리북 위치는 추론하지 않고
+     design-system/admin-partner/src/**/*.stories.tsx 의 title 값에서 가져온다.
+     story id 는 그 title + export 이름에서 파생되며 URL로 바로 여는 용도다
+     (yarn storybook 후 http://localhost:6008/?path=/story/<story id>). */
+  .tag-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; align-items: center; }
+  .tag-row .pair { display: inline-flex; align-items: center; gap: 4px; }
+  .tag {
+    font-family: "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.5;
+    background: #f2f4f7; color: var(--text-900);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+  }
+  .tag-row .pair > code {
+    font-family: "SF Mono", Menlo, monospace; font-size: 10.5px;
+    background: transparent; color: var(--text-500); padding: 0; white-space: nowrap;
+  }
+  /* 스토리가 없는 컴포넌트 — 빈칸으로 두지 않고 사실을 표시한다 */
+  .tag-row .pair > code.no-story { color: #b54708; font-style: italic; }
+  /* 디자인 시스템 미보유 컴포넌트는 색을 달리해 구분한다 */
+  .tag.proposed { background: #fffcf5; border-color: #fdb022; color: #b54708; }
+
+  @media (max-width: 1320px) {
+    .desc-panel { width: 280px; right: 12px; }
+  }
+
+  /* ===== 화면 블록: 화면(풀사이즈) + 바로 아래 디스크립션 ===== */
+  .screens-main { display: flex; flex-direction: column; gap: 48px; margin-top: 20px; }
+  .screen-block { scroll-margin-top: 20px; }
+  .screen-title { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .screen-title .screen-num { font-size: 13px; font-weight: 700; color: var(--text-500); }
+  .screen-title h3 { font-size: 16px; margin: 0; color: var(--text-900); }
+  .screen-title h3 .kr { font-weight: 400; color: var(--text-600); }
+  .screen-title .badge {
+    font-size: 11px;
+    color: var(--text-500);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+  .screen-mock {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    background: #fff;
+  }
+
+  /* ===== 번호 주석(annotation) — 화면의 특정 부위에 번호를 매김 ===== */
+  .num-region { position: relative; margin-top: 18px; }
+  .num-region:first-child { margin-top: 4px; }
+  .num-badge {
+    position: absolute; top: -10px; left: -10px; z-index: 2;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--text-900); color: #fff;
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 3px #fff;
+  }
+
+  /* ===== 화면설명 — 화면 바로 아래에 실제로 보이는 블록 (숨기지 않는다) =====
+     페이지 자체에 대한 설명과 로직: 규칙·계산식·데이터 출처·권한·예외 처리.
+     UI를 전면 재설계해도 그대로 살아남는 내용만 여기 둔다. */
+  .screen-note {
+    margin-top: 14px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--text-900);
+    border-radius: 10px;
+    padding: 16px 20px;
+    background: #fff;
+  }
+  .screen-note h4 {
+    font-size: 12.5px; margin: 0 0 10px; color: var(--text-700);
+    letter-spacing: 0.02em;
+  }
+  /* 번호 목록은 UI 영역 지목 전용이므로 화면설명은 글머리 목록으로 쓴다 */
+  .screen-note ul { margin: 0; padding-left: 18px; }
+  .screen-note li { font-size: 13.5px; color: var(--text-700); margin-bottom: 6px; }
+  .screen-note li:last-child { margin-bottom: 0; }
+  .screen-note strong { color: var(--text-900); }
+  .screen-note code {
+    font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--text-600);
+  }
+
+  /* ===== UI 디스크립션 (화면당) — 원본은 화면 아래, 표시는 우측 패널 ===== */
+  .screen-desc {
+    margin-top: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    background: var(--bg-soft);
+  }
+  .screen-desc h4 {
+    font-size: 12.5px; margin: 0 0 12px; color: var(--text-500);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .desc-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .desc-legend li { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; color: var(--text-700); }
+  .desc-legend .num {
+    flex: 0 0 auto; margin-top: 1px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--text-900); color: #fff;
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .desc-legend strong { color: var(--text-900); }
+  .new-component-note {
+    margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--border);
+    font-size: 12.5px; color: var(--text-500);
+  }
+  .new-component-note strong { color: var(--text-700); }
+  .new-component-note.has-proposal { color: var(--text-700); }
+  .new-component-note .proposed-name { color: #b54708; font-weight: 600; }
+
+  /* ===== 디자인 시스템 미보유 영역 — 기존 컴포넌트와 시각적으로 구분
+     (클래스명의 proposed 는 초기 명명 잔재, 의미는 "미보유 표시") ===== */
+  .proposed-region {
+    border: 1px dashed #fdb022; background: #fffcf5; border-radius: 8px; padding: 14px 16px;
+  }
+  .num-badge.proposed { background: #dc6803; }
+  .desc-legend .num.proposed { background: #dc6803; }
+
+  /* ===== 컴포넌트: Button (inputs/button) ===== */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    font-weight: 500; font-size: 14px; border-radius: 8px; cursor: pointer;
+    border: none; height: 36px; padding: 8px 12px;
+  }
+  .btn:active { transform: scale(0.99); }
+  .btn-primary { background: var(--text-900); color: #fff; border: 2px solid rgba(255,255,255,.12); }
+  .btn-primary.lg { height: 44px; padding: 10px 18px; font-size: 15px; }
+  .btn-secondary-gray { background: #fff; border: 1px solid var(--border-strong); color: var(--text-700); }
+  .btn-cancel { background: #fee4e2; color: #d92d20; border: 1px solid #fecdca; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ===== 컴포넌트: Checkbox (inputs/checkbox) ===== */
+  .ds-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-700); cursor: pointer; }
+  .ds-checkbox input { width: 16px; height: 16px; accent-color: #000; cursor: pointer; }
+
+  /* ===== 컴포넌트: DateRangePicker (inputs/dateRangePicker) ===== */
+  .ds-daterange {
+    display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px;
+    border: 1px solid var(--border-strong); border-radius: 8px; background: #fff;
+    box-shadow: 0px 1px 2px 0px rgba(16,24,40,.05);
+  }
+  .ds-daterange input[type="date"] { border: none; outline: none; font-size: 13px; color: #101828; font-family: inherit; }
+  .ds-daterange .sep { color: var(--text-500); font-size: 13px; }
+
+  /* ===== 컴포넌트: FilterChip (inputs/filterChip) — 적용된 필터 표시 ===== */
+  .ds-filterchip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px 4px 12px;
+    border-radius: 9999px; border: 1px solid var(--border); background: var(--bg-soft);
+    font-size: 13px; font-weight: 500;
+  }
+  .ds-filterchip .label { color: var(--blue); }
+  .ds-filterchip .remove { border: none; background: none; color: #9da4ae; cursor: pointer; font-size: 13px; line-height: 1; padding: 2px; }
+
+  /* ===== 컴포넌트: Table (display/table) ===== */
+  .ds-table { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; font-size: 14px; }
+  .ds-table thead th { background: var(--bg-soft); font-weight: 500; padding: 12px 16px; text-align: left; }
+  .ds-table tbody td { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-weight: 400; }
+  .ds-table tbody tr:hover { background: var(--bg-soft); cursor: pointer; }
+  .ds-table tbody tr.empty:hover { background: none; cursor: default; }
+
+  /* ===== 컴포넌트: Tag (display/tag) ===== */
+  .ds-tag { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 12px; font-size: 13px; background: #edfcf2; border: 1px solid #aaf0c4; color: #087443; }
+
+  /* ===== 컴포넌트: Pagination (display/pagination) ===== */
+  .ds-pagination { display: flex; justify-content: center; gap: 4px; padding: 14px 0 0; font-size: 13px; font-weight: 600; }
+  .ds-pagination button { border: none; background: transparent; color: #1f2a37; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+  .ds-pagination button.active { background: var(--bg-soft); }
+  .ds-pagination button:disabled { color: var(--text-500); cursor: not-allowed; }
+
+  /* ===== 컴포넌트: Modal (feedback/modal) ===== */
+  .ds-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity .15s;
+  }
+  .ds-modal-backdrop.open { opacity: 1; pointer-events: auto; }
+  .ds-modal-box {
+    background: #fff; border-radius: 8px; padding: 24px; width: 100%; max-width: 380px;
+    box-shadow: 0px 20px 24px -4px rgba(16,24,40,.08), 0px 8px 8px -4px rgba(16,24,40,.03);
+    transform: scale(.96); opacity: 0; transition: all .15s;
+  }
+  .ds-modal-backdrop.open .ds-modal-box { transform: scale(1); opacity: 1; }
+  .ds-modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+  .ds-modal-header h3 { font-size: 18px; font-weight: 600; margin: 0; }
+  .ds-modal-header button { border: none; background: none; cursor: pointer; font-size: 16px; color: var(--text-500); }
+  .ds-modal-content { margin-bottom: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .ds-modal-footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+  /* ===== 컴포넌트: InfoField (display/infoField) ===== */
+  .ds-infofield { display: flex; flex-direction: column; gap: 2px; }
+  .ds-infofield .label { font-size: 13px; color: var(--text-700); }
+  .ds-infofield .value { font-size: 14px; color: var(--text-900); font-weight: 500; }
+  .ds-infofield .helper { font-size: 12px; color: var(--text-500); }
+  .infofield-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px 16px; }
+
+  /* ===== 컴포넌트: Card (layout/card) ===== */
+  .ds-card { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e4e7ec; box-shadow: 0px 1px 2px 0px rgba(16,24,40,.05); }
+  .ds-card .card-label { font-size: 13px; color: var(--text-500); margin-bottom: 6px; }
+  .ds-card .card-value { font-size: 22px; font-weight: 700; color: var(--text-900); }
+  .card-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+  /* ===== 컴포넌트: ProgressBar (display/progressBar) ===== */
+  .ds-progress { display: flex; align-items: center; gap: 12px; width: 100%; }
+  .ds-progress .track { flex: 1; height: 8px; background: var(--border); border-radius: 9999px; overflow: hidden; }
+  .ds-progress .fill { height: 100%; background: var(--text-600); border-radius: 9999px; transition: width .3s; }
+  .ds-progress .txt { font-size: 14px; font-weight: 500; color: var(--text-600); white-space: nowrap; }
+  .ds-progress .txt .current { color: var(--blue); }
+
+  /* ===== 컴포넌트: SegmentedTabs (navigation/segmentedTabs) ===== */
+  .ds-segtabs { display: flex; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }
+  .ds-segtabs button {
+    border: none; background: transparent; color: var(--text-500);
+    font-size: 14px; font-weight: 600; padding: 8px 16px; cursor: pointer; flex: 1;
+  }
+  .ds-segtabs button.active { background: #fff; color: var(--text-700); box-shadow: inset 0 0 0 1px var(--border-strong); border-radius: 7px; }
+
+  /* ===== 컴포넌트: SubTitle (display/subTitle) ===== */
+  .ds-subtitle { font-size: 20px; font-weight: 700; color: var(--text-900); margin: 0; }
+
+  /* ===== 컴포넌트: Divider (display/divider) ===== */
+  .ds-divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+  .toast {
+    display: inline-block; margin-left: 10px; font-size: 13px; color: #16b364;
+    opacity: 0; transition: opacity .2s;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<h1>파트너 정산 상세 조회 (Sample)</h1>
+<p class="meta">문서 종류: 통합캔버스 샘플 · 작성 기준: one-canvas/one-canvas-rule.md 참조 · 캔버스 1개 = 에픽 1개 원칙에 따라 <code>canvas-partner-settlement-list.html</code>(목록 조회 에픽)에서 분리된 문서입니다. 화면 버튼은 실제 동작하는 인터랙션 데모입니다.</p>
+
+<!-- ================= 도메인 ================= -->
+<h2>도메인</h2>
+<table class="spec">
+  <tr><th>도메인</th><td>settlement (정산)</td></tr>
+</table>
+
+<!-- ================= 참고 자료 ================= -->
+<h2>참고 자료</h2>
+<ul class="ref-list">
+  <li><strong>Figma 디자인 시안</strong> — <a href="https://figma.com/file/xxxx-partner-settlement" target="_blank" rel="noopener">https://figma.com/file/xxxx-partner-settlement</a> — 정산 내역 조회 화면 3종 hi-fi 시안</li>
+  <li><strong>정산 수수료율 정책 엑셀</strong> — <a href="https://docs.google.com/spreadsheets/d/xxxx-settlement-fee" target="_blank" rel="noopener">https://docs.google.com/spreadsheets/d/xxxx-settlement-fee</a> — 파트너 등급별 수수료율 및 정산 주기 정의</li>
+</ul>
+
+<!-- ================= 에픽 ================= -->
+<h2>에픽</h2>
+<table class="spec">
+  <tr><th>에픽</th><td>epic-partner-settlement-detail (파트너 정산 상세 조회)</td></tr>
+  <tr><th>목적</th><td>파트너가 정산 금액이 왜 그 금액인지 스스로 납득할 수 있도록 산출 근거를 공개해, 금액 관련 문의를 줄인다.</td></tr>
+  <tr><th>주요 범위 (In-Scope)</th><td>목록에서 건별 상세 확인(모달), 정산 상세 페이지형 대안 UI, 정산 내역서 다운로드</td></tr>
+  <tr><th>제외 범위 (Out-of-Scope)</th><td>정산 금액 수정 및 이의 신청 접수(별도 에픽으로 이관)</td></tr>
+  <tr><th>완료 기준</th><td>파트너가 목록에서 특정 건을 클릭해 상세 산출 근거(판매액/수수료/조정 금액/최종 정산액)를 확인하고, 정산 내역서를 다운로드할 수 있어야 한다.</td></tr>
+</table>
+
+<!-- ================= 유저스토리 ================= -->
+<h2>유저스토리</h2>
+<ul class="story-list">
+  <li>
+    <span class="story-name">story-settlement-detail (파트너가 특정 건의 정산 상세를 확인한다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 정산 내역 목록이 표시된 상태에서, <b>When</b> 특정 정산 건을 클릭하면, <b>Then</b> 정산 금액 산출 근거가 담긴 상세를 보여준다.</li>
+      <li><b>Given</b> 정산 상세를 보고 있는 파트너가 있고, <b>When</b> 정산내역 다운로드를 요청하면, <b>Then</b> 정산 내역서 파일 다운로드가 시작되고 시작 안내를 보여준다.</li>
+    </ul>
+    <!-- 동작 순서 — GWT를 쉬운 말로 다시 쓴 블록. 새 조건·단계를 만들지 않는다(one-canvas-rule.md 「동작 순서」). -->
+    <div class="story-steps" id="steps-settlement-detail">
+      <h5>동작 순서 — story-settlement-detail</h5>
+      <p class="steps-case">상세 확인</p>
+      <ol>
+        <li>정산 내역 목록 화면에 접근합니다.</li>
+        <li>확인하려는 정산 건을 클릭합니다.</li>
+        <li>정산 금액 산출 근거가 담긴 상세가 열림을 확인할 수 있습니다.</li>
+      </ol>
+      <p class="steps-case">정산내역 다운로드</p>
+      <ol>
+        <li>정산 상세를 보고 있는 상태에서 정산내역 다운로드를 요청합니다.</li>
+        <li>정산 내역서 파일 다운로드가 시작되고 시작 안내가 표시됨을 확인할 수 있습니다.</li>
+      </ol>
+    </div>
+  </li>
+</ul>
+
+<!-- ================= 화면(디자인) ================= -->
+<h2>화면(디자인)</h2>
+<p class="meta">design-system/admin-partner 컴포넌트를 참조하여 구성. 컴포넌트 태깅은 요소 앞 HTML 주석과 UI 디스크립션 병기 두 곳에 남긴다(one-canvas-rule.md). 화면 위 번호는 UI 디스크립션의 번호와 1:1로 대응한다. 목록 화면 자체는 <code>canvas-partner-settlement-list.html</code> 이 소유하며, 여기서는 <strong>상세 진입점</strong>으로만 축약해 보여준다.</p>
+<p class="meta">
+  <strong>디스크립션은 유형에 따라 자리가 갈린다</strong>(one-canvas-rule.md 「디스크립션 유형과 위치」) —
+  <strong>화면설명</strong>은 화면 바로 아래에 그대로 보이며 페이지 자체에 대한 설명과 로직(규칙·계산식·데이터 출처·권한·예외)을 담고,
+  <strong>UI 디스크립션</strong>은 우측 플로팅 패널에 뜨며 번호로 지목한 영역·컴포넌트 태깅·인터랙션을 담는다.
+  태깅 칩 옆의 <code>story id</code>는 스토리북에서 그 컴포넌트를 여는 값이다
+  (<code>pnpm storybook</code> 후 <code>http://localhost:6008/?path=/story/&lt;story id&gt;</code>).
+  스토리가 없는 컴포넌트는 <code>스토리 없음</code>으로 표시한다 — 빈칸으로 두지 않는다.
+</p>
+
+<div class="screens-main">
+
+  <!-- ========== 화면 1: settlement-detail-modal (정산 상세 모달) ========== -->
+  <section class="screen-block" id="screen-detail-modal">
+    <div class="screen-title">
+      <span class="screen-num">화면 1</span>
+      <h3>settlement-detail-modal <span class="kr">(정산 상세 모달)</span></h3>
+      <span class="badge">story-settlement-detail</span>
+    </div>
+
+    <div class="screen-mock">
+      <div class="num-region">
+        <span class="num-badge">1</span>
+        <!-- component: Table | story: 없음 (src/components/display/table/table.tsx — 스토리 파일 없음)
+             진입점만 축약해 보여주는 자리라 페이지네이션·검색결과 카운트가 붙는
+             CommonTable(Display/CommonTable)이 아니라 행만 렌더하는 Table을 쓴다.
+             목록 화면 본체는 canvas-partner-settlement-list.html 이 소유한다. -->
+        <!-- component: Tag | story: Display/Tag (src/components/display/tag/tag.stories.tsx) -->
+        <table class="ds-table">
+          <thead>
+            <tr><th>정산일</th><th>파트너명</th><th>금액</th><th>상태</th></tr>
+          </thead>
+          <tbody id="settlementRows"></tbody>
+        </table>
+      </div>
+
+      <div class="num-region">
+        <span class="num-badge">2</span>
+        <!-- component: Modal | story: Feedback/Modal (src/components/feedback/modal/modal.stories.tsx) -->
+        <p style="font-size:13px; color:var(--text-500); margin:0;">
+          행을 클릭하면 아래 모달이 열린다. (모달 마크업은 문서 하단 전역 <code>#detailModal</code>)
+        </p>
+        <div style="margin-top:8px;">
+          <button class="btn btn-secondary-gray" id="openFirstDetail" type="button">첫 번째 건 상세 열기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 화면설명 — 화면 아래에 그대로 보인다. 우측 패널은 이 블록을 복제하지 않는다. -->
+    <div class="screen-note">
+      <h4>화면설명 — settlement-detail-modal (정산 상세 모달)</h4>
+      <ul>
+        <li><strong>소유 범위</strong> — 이 화면은 <strong>상세 진입 지점</strong>까지만 소유한다. 목록 조회·필터·페이지네이션 정책은 <code>canvas-partner-settlement-list.html</code>(목록 조회 에픽)이 소유하므로 여기서 정의하지 않는다.</li>
+        <li><strong>정산액 산출 구조</strong> — 최종 정산액은 <code>상품 판매액 − 플랫폼 수수료 ± 조정 금액</code> 4단으로 구성한다. 상세는 이 4개 항목을 모두 공개해 금액의 근거를 확인할 수 있게 한다. <em>(근거: 화면 2의 값 1,340,000 − 134,000 − 2,000 = 1,204,000)</em></li>
+        <li><strong>수수료율 출처</strong> — 파트너 등급별 수수료율은 참고 자료의 「정산 수수료율 정책 엑셀」이 정본이며, 화면에는 해당 건에 적용된 비율을 함께 표기한다.</li>
+        <li><strong>보류 건 표기</strong> — 보류 상태인 정산 건은 최종 정산액이 확정액으로 읽히지 않도록 보류임을 함께 표기한다.</li>
+        <li><strong>제외</strong> — 정산 금액 수정·이의 신청 접수는 이 화면에서 다루지 않는다(에픽 제외 범위 — 별도 에픽으로 이관).</li>
+      </ul>
+    </div>
+
+    <!-- UI 디스크립션 — 원본은 여기 두고 CSS로 숨긴다. 우측 패널이 복제해 보여준다. -->
+    <div class="screen-desc">
+      <h4>UI 디스크립션 — settlement-detail-modal (정산 상세 모달)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>상세 진입점</strong> — 정산 내역 목록의 행. 행을 클릭하면 2번 모달이 열린다. 상태는 Tag로 표시한다. 진입점만 축약한 자리이므로 페이지네이션·검색결과 카운트가 붙는 <code>CommonTable</code>이 아니라 행만 렌더하는 <code>Table</code>을 쓴다.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">Table</span> <code class="no-story">스토리 없음</code></span>
+            <span class="pair"><span class="tag">Tag</span> <code>display-tag--default</code></span>
+          </div></div></li>
+        <li><span class="num">2</span><div><strong>정산 상세 모달</strong> — 파트너명과 산출 근거 4개 항목을 InfoField로 나열한다. 닫기 버튼 · 헤더 ✕ · 배경 클릭 · ESC 4가지 경로로 닫히며, 모달 내부 클릭으로는 닫히지 않는다.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">Modal</span> <code>feedback-modal--default</code></span>
+            <span class="pair"><span class="tag">InfoField</span> <code>display-infofield--default</code></span>
+            <span class="pair"><span class="tag">Button(variant=secondaryGray)</span> <code>inputs-button--secondary-gray</code></span>
+          </div></div></li>
+      </ol>
+      <p class="new-component-note"><strong>디자인 시스템 미보유:</strong> 없음 — Table, Tag, Modal, InfoField, Button 모두 기존 design-system/admin-partner 컴포넌트로 구성.</p>
+    </div>
+  </section>
+
+  <section class="screen-block" id="screen-detail-page">
+    <div class="screen-title">
+      <span class="screen-num">화면 2</span>
+      <h3>settlement-detail-page <span class="kr">(정산 상세 페이지형)</span></h3>
+      <span class="badge">story-settlement-detail (대안 UI)</span>
+    </div>
+
+    <div class="screen-mock">
+
+      <div class="num-region">
+        <span class="num-badge">1</span>
+        <!-- component: SubTitle | story: Display/SubTitle (src/components/display/subTitle/subTitle.stories.tsx) -->
+        <div class="ds-subtitle">정산 상세 — 2026-07-20 (스타일셀러)</div>
+      </div>
+
+      <div class="num-region">
+        <span class="num-badge">2</span>
+        <!-- component: InfoField | story: Display/InfoField (src/components/display/infoField/infoField.stories.tsx) -->
+        <div class="infofield-grid">
+          <div class="ds-infofield"><span class="label">파트너명</span><span class="value">스타일셀러</span></div>
+          <div class="ds-infofield"><span class="label">정산 기간</span><span class="value">2026-07-01 ~ 2026-07-20</span></div>
+          <div class="ds-infofield"><span class="label">상품 판매액</span><span class="value">1,340,000원</span></div>
+          <div class="ds-infofield"><span class="label">플랫폼 수수료</span><span class="value">-134,000원</span><span class="helper">수수료율 10%</span></div>
+          <div class="ds-infofield"><span class="label">조정 금액</span><span class="value">-2,000원</span><span class="helper">반품 1건 반영</span></div>
+          <div class="ds-infofield"><span class="label">최종 정산액</span><span class="value">1,204,000원</span></div>
+        </div>
+      </div>
+
+      <!-- component: Divider | story: Display/Divider (src/components/display/divider/divider.stories.tsx) -->
+      <hr class="ds-divider" />
+
+      <div class="num-region" style="margin-top:0;">
+        <span class="num-badge">3</span>
+        <!-- component: Button(variant=secondaryGray / primary) | story: Inputs/Button (src/components/inputs/button/button.stories.tsx) -->
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-secondary-gray" id="backToListBtn">목록으로</button>
+          <button class="btn btn-primary lg" id="downloadBtn">정산내역 다운로드</button>
+          <!-- component: Toast | story: Feedback/Toast (src/components/feedback/toast/toast.stories.tsx) -->
+          <span class="toast" id="downloadToast">다운로드가 시작되었습니다</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 화면설명 — 화면 아래에 그대로 보인다. 우측 패널은 이 블록을 복제하지 않는다. -->
+    <div class="screen-note">
+      <h4>화면설명 — settlement-detail-page (정산 상세 페이지형)</h4>
+      <ul>
+        <li><strong>전제 — 모달과의 관계</strong>: 본 문서는 페이지형이 모달을 대체하지 않고 <strong>병행 제공</strong>되는 것을 전제로 작성했다 — <em>확정 필요</em>. 대체로 확정되면 화면 1(모달)을 이 캔버스에서 걷어내야 한다.</li>
+        <li><strong>산출 구조</strong> — 화면 1과 동일한 정산액 산출 구조를 그대로 보여준다. 계산식·수수료율 출처는 화면 1의 화면설명이 소유하며 여기서 다시 정의하지 않는다.</li>
+        <li><strong>표시 항목</strong> — 파트너명 · 정산 기간 · 상품 판매액 · 플랫폼 수수료 · 조정 금액 · 최종 정산액 6개를 모두 노출한다. 수수료에는 적용된 수수료율을, 조정 금액에는 조정 사유(예: 반품 건수 반영)를 함께 표기해 금액만 보고 되묻지 않게 한다.</li>
+        <li><strong>정산 기간</strong> — 금액은 특정 시점이 아니라 조회 대상 정산 기간(시작일 ~ 종료일) 전체에 대한 집계다.</li>
+      </ul>
+    </div>
+
+    <!-- UI 디스크립션 — 원본은 여기 두고 CSS로 숨긴다. 우측 패널이 복제해 보여준다. -->
+    <div class="screen-desc">
+      <h4>UI 디스크립션 — settlement-detail-page (정산 상세 페이지형)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>타이틀</strong> — 조회 대상 정산 건의 일자와 파트너명을 SubTitle로 표시한다.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">SubTitle</span> <code>display-subtitle--default</code></span>
+          </div></div></li>
+        <li><span class="num">2</span><div><strong>정산 내역 상세</strong> — 6개 항목을 InfoField 3열 그리드로 나열한다. 수수료율·조정 사유는 InfoField의 helper 영역에 붙인다. 액션 영역과는 Divider로 나눈다.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">InfoField</span> <code>display-infofield--with-helper-text</code></span>
+            <span class="pair"><span class="tag">Divider</span> <code>display-divider--horizontal</code></span>
+          </div></div></li>
+        <li><span class="num">3</span><div><strong>액션 버튼</strong> — 「목록으로」(secondaryGray)와 「정산내역 다운로드」(primary·lg)를 나란히 둔다. 다운로드를 누르면 시작 안내 토스트가 뜬다.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">Button(variant=secondaryGray)</span> <code>inputs-button--secondary-gray</code></span>
+            <span class="pair"><span class="tag">Button(variant=primary·lg)</span> <code>inputs-button--primary</code></span>
+            <span class="pair"><span class="tag">Toast</span> <code>feedback-toast--success</code></span>
+          </div></div></li>
+      </ol>
+      <p class="new-component-note"><strong>디자인 시스템 미보유:</strong> 없음 — SubTitle, InfoField, Divider, Button, Toast 모두 기존 design-system/admin-partner 컴포넌트로 구성.</p>
+    </div>
+  </section>
+
+</div>
+
+<!-- 상세 모달 (전역) -->
+<!-- component: Modal | story: Feedback/Modal (src/components/feedback/modal/modal.stories.tsx) -->
+<div class="ds-modal-backdrop" id="detailModal">
+  <div class="ds-modal-box">
+    <div class="ds-modal-header">
+      <h3 id="modalTitle">정산 상세</h3>
+      <button id="modalCloseX" type="button">✕</button>
+    </div>
+    <div class="ds-modal-content" id="modalContent"></div>
+    <div class="ds-modal-footer">
+      <button class="btn btn-secondary-gray" id="modalCloseBtn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 우측 플로팅 UI 디스크립션 패널 =================
+     화면 아래 .screen-desc 가 원본이고, 이 패널은 현재 보고 있는 화면의
+     UI 디스크립션을 복제해 보여준다. 토글로 접었다 펼 수 있다.
+     화면설명(.screen-note)은 복제 대상이 아니다 — 화면 아래에서 직접 읽는다. -->
+<aside class="desc-panel" id="descPanel">
+  <div class="desc-panel__head">
+    <span class="desc-panel__label">UI 디스크립션</span>
+    <span class="desc-panel__screen" id="descPanelScreen">—</span>
+    <button class="desc-panel__toggle" id="descPanelToggle" type="button" aria-expanded="true">접기</button>
+  </div>
+  <div class="desc-panel__body" id="descPanelBody"></div>
+</aside>
+
+<script>
+  // ---- 우측 플로팅 UI 디스크립션 패널 ----
+  // 화면 아래 .screen-desc(원본)를 복제해 패널에 띄운다. 원본은 CSS로 숨겨져 있다.
+  // .screen-note(화면설명)는 선택자에 들어가지 않는다 — 복제하면 화면 하단과 중복된다.
+  (function initDescPanel() {
+    const panel = document.getElementById('descPanel');
+    const body = document.getElementById('descPanelBody');
+    const screenLabel = document.getElementById('descPanelScreen');
+    const toggle = document.getElementById('descPanelToggle');
+    const blocks = Array.from(document.querySelectorAll('.screen-block'));
+    if (!panel || !blocks.length) return;
+
+    let activeId = null;
+    function render(block) {
+      if (!block || block.id === activeId) return;
+      activeId = block.id;
+      const num = block.querySelector('.screen-num');
+      const title = block.querySelector('.screen-title h3');
+      screenLabel.textContent =
+        (num ? num.textContent + ' · ' : '') + (title ? title.textContent.trim() : '');
+      const desc = block.querySelector('.screen-desc');
+      body.innerHTML = '';
+      if (desc) body.appendChild(desc.cloneNode(true));
+      body.scrollTop = 0;
+    }
+
+    // 뷰포트에서 가장 많이 보이는 화면 블록을 활성으로 삼는다
+    const ratios = new Map();
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((e) => ratios.set(e.target, e.intersectionRatio));
+      let best = null, bestRatio = 0;
+      ratios.forEach((r, el) => { if (r > bestRatio) { bestRatio = r; best = el; } });
+      if (best) render(best);
+    }, { threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] });
+    blocks.forEach((b) => observer.observe(b));
+
+    render(blocks[0]);
+
+    toggle.addEventListener('click', () => {
+      const collapsed = panel.classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '펼치기' : '접기';
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+  })();
+
+  // ---- 더미 데이터 (정산 내역) ----
+  const SETTLEMENTS = [
+    { id: 1, date: '2026-07-20', partner: '스타일셀러', amount: 1204000, status: '완료',
+      breakdown: [['상품 판매액', '1,340,000원'], ['플랫폼 수수료', '-134,000원'], ['조정 금액', '-2,000원'], ['최종 정산액', '1,204,000원']] },
+    { id: 2, date: '2026-07-15', partner: '스타일셀러', amount: 982500, status: '대기',
+      breakdown: [['상품 판매액', '1,092,000원'], ['플랫폼 수수료', '-109,500원'], ['조정 금액', '0원'], ['최종 정산액', '982,500원']] },
+    { id: 3, date: '2026-07-10', partner: '그린라이프', amount: 650000, status: '완료',
+      breakdown: [['상품 판매액', '722,000원'], ['플랫폼 수수료', '-72,000원'], ['조정 금액', '0원'], ['최종 정산액', '650,000원']] },
+    { id: 4, date: '2026-07-05', partner: '그린라이프', amount: 410300, status: '보류',
+      breakdown: [['상품 판매액', '455,900원'], ['플랫폼 수수료', '-45,600원'], ['조정 금액', '0원'], ['최종 정산액', '410,300원(보류)']] },
+    { id: 5, date: '2026-06-28', partner: '오늘의부엌', amount: 1502000, status: '완료',
+      breakdown: [['상품 판매액', '1,668,900원'], ['플랫폼 수수료', '-166,900원'], ['조정 금액', '0원'], ['최종 정산액', '1,502,000원']] },
+    { id: 6, date: '2026-06-20', partner: '오늘의부엌', amount: 275000, status: '대기',
+      breakdown: [['상품 판매액', '305,600원'], ['플랫폼 수수료', '-30,600원'], ['조정 금액', '0원'], ['최종 정산액', '275,000원']] },
+  ];
+
+  function fmtAmount(n) { return n.toLocaleString('ko-KR') + '원'; }
+
+  // ---- 화면 1: 상세 진입점 목록 (목록 정책은 canvas-partner-settlement-list.html 소유) ----
+  function renderRows() {
+    const tbody = document.getElementById('settlementRows');
+    tbody.innerHTML = '';
+    SETTLEMENTS.slice(0, 3).forEach((row) => {
+      const tr = document.createElement('tr');
+      tr.dataset.id = row.id;
+      tr.innerHTML =
+        '<td>' + row.date + '</td>' +
+        '<td>' + row.partner + '</td>' +
+        '<td>' + fmtAmount(row.amount) + '</td>' +
+        '<td><span class="ds-tag">' + row.status + '</span></td>';
+      tr.addEventListener('click', () => openDetailModal(row.id));
+      tbody.appendChild(tr);
+    });
+  }
+
+  // ---- 상세 모달 ----
+  const modalBackdrop = document.getElementById('detailModal');
+  function openDetailModal(id) {
+    const row = SETTLEMENTS.find((s) => s.id === id);
+    if (!row) return;
+    document.getElementById('modalTitle').textContent = row.date + ' 정산 상세';
+    const content = document.getElementById('modalContent');
+    content.innerHTML = '';
+    const partnerField = document.createElement('div');
+    partnerField.className = 'ds-infofield';
+    partnerField.innerHTML = '<span class="label">파트너명</span><span class="value">' + row.partner + '</span>';
+    content.appendChild(partnerField);
+    row.breakdown.forEach(([label, value]) => {
+      const f = document.createElement('div');
+      f.className = 'ds-infofield';
+      f.innerHTML = '<span class="label">' + label + '</span><span class="value">' + value + '</span>';
+      content.appendChild(f);
+    });
+    modalBackdrop.classList.add('open');
+  }
+  function closeDetailModal() { modalBackdrop.classList.remove('open'); }
+  document.getElementById('modalCloseX').addEventListener('click', closeDetailModal);
+  document.getElementById('modalCloseBtn').addEventListener('click', closeDetailModal);
+  modalBackdrop.addEventListener('click', (e) => { if (e.target === modalBackdrop) closeDetailModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetailModal(); });
+
+  renderRows();
+  document.getElementById('openFirstDetail').addEventListener('click', () => openDetailModal(1));
+
+  // ---- 화면 2: 상세 페이지형 인터랙션 ----
+  document.getElementById('backToListBtn').addEventListener('click', () => {
+    document.getElementById('screen-detail-modal').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  document.getElementById('downloadBtn').addEventListener('click', () => {
+    const toast = document.getElementById('downloadToast');
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  });
+</script>
+
+</body>
+</html>

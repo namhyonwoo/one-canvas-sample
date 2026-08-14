@@ -1,0 +1,2654 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>통합캔버스 — one-tool 공동작업 툴</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['-apple-system', 'Apple SD Gothic Neo', 'Malgun Gothic', 'sans-serif'],
+          mono: ['SF Mono', 'Menlo', 'monospace'],
+        },
+      },
+    },
+  };
+</script>
+<style>
+  /* Custom scrollbar & caret styling */
+  .caret { transition: transform 0.15s ease; }
+</style>
+</head>
+<body class="font-sans bg-gray-100 text-[#1c1f24] min-h-screen flex flex-col">
+
+  <!-- ================= 최초 로딩 =================
+       인증 확인(/api/members/me) 응답 전까지 보여준다. 이것이 없으면 세 화면이 모두 감춰져 있어
+       콜드 스타트 동안 빈 페이지가 뜬다 — 로그인 화면이 늦게 뜨는 것과 고장난 것은 달라야 한다. -->
+  <div id="bootScreen" class="flex-1 flex flex-col items-center justify-center gap-3">
+    <span class="text-xs font-bold tracking-wider text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded">ONE CANVAS</span>
+    <p class="text-xs text-gray-500">불러오는 중…</p>
+  </div>
+
+  <!-- ================= 작업 화면(캔버스/이슈) =================
+       로그인·모드 선택 화면과 자리를 나눠 쓴다. 처음에는 감춰 두고, 인증이 확인된 뒤
+       라우터(applyRoute)가 켠다 — /me 응답 전에 작업 화면이 번쩍이지 않게 하려는 것이다. -->
+  <div id="appShell" class="flex-1 flex flex-col min-h-0" style="display:none;">
+
+  <!-- ================= 최상단 시스템 네비게이션 바 ================= -->
+  <header class="bg-gray-900 text-white px-4 py-2.5 flex items-center justify-between shadow-md z-30 flex-none">
+    <div class="flex items-center gap-3 min-w-0">
+      <button type="button" id="backToModesBtn" title="모드 선택으로"
+              class="text-xs font-bold tracking-wider text-emerald-400 bg-gray-800 px-2 py-1 rounded hover:bg-gray-700 cursor-pointer">ONE CANVAS</button>
+      <!-- 뷰 스위처 — 캔버스 보기 / 이슈 보기. 두 모드가 같은 자리를 공유해 어느 쪽에서도 한 번에 반대 모드로 간다. -->
+      <div id="viewSwitch" class="inline-flex flex-none bg-gray-800 rounded-lg p-0.5 gap-0.5" role="group" aria-label="보기 전환">
+        <button type="button" data-mode="canvas" aria-pressed="true"
+                class="view-switch-btn px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer whitespace-nowrap">캔버스</button>
+        <button type="button" data-mode="issue" aria-pressed="false"
+                class="view-switch-btn px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer whitespace-nowrap">이슈</button>
+      </div>
+      <span class="font-mono text-xs text-gray-300 truncate" id="navCanvasName">선택된 캔버스 없음</span>
+    </div>
+    <div class="flex items-center gap-3 flex-none">
+      <!-- 회원 상태 / 로그인 버튼 -->
+      <div id="userNavArea" class="flex items-center gap-2">
+        <!-- 로그인 상태에서 누르면 내 정보(닉네임/비밀번호) 모달이 열린다. 좁은 화면에서는
+             이메일이 숨으므로 아바타에도 같은 동작을 걸어 진입로가 사라지지 않게 한다. -->
+        <button type="button" id="openProfileModalBtn" class="flex items-center gap-2 rounded px-1 py-0.5 hidden hover:bg-gray-800 cursor-pointer" title="내 정보">
+          <span id="userAvatar" class="w-6 h-6 rounded-full bg-blue-500 text-white text-[11px] font-bold flex items-center justify-center">K</span>
+          <span id="userId" class="text-xs text-gray-300 font-mono hidden sm:inline">비로그인</span>
+        </button>
+        <!-- 비로그인일 때는 클릭할 것이 없으므로 같은 자리를 정적 텍스트로 채운다. -->
+        <span id="userIdGuest" class="text-xs text-gray-300 font-mono hidden sm:inline">비로그인</span>
+        <button type="button" id="openAuthModalBtn" class="text-xs text-gray-400 hover:text-white underline cursor-pointer">로그인/가입</button>
+        <button type="button" id="logoutBtn" class="text-xs text-gray-400 hover:text-white underline cursor-pointer hidden">로그아웃</button>
+      </div>
+
+      <!-- 코멘트 모드 토글 버튼 -->
+      <button type="button" id="openCommentBtn" aria-expanded="false"
+              class="inline-flex items-center justify-center gap-1.5 h-[30px] px-2.5 rounded-lg text-[13px] font-medium bg-white border border-gray-300 text-gray-800 hover:bg-gray-100 active:scale-[.99] cursor-pointer">
+        코멘트 <span class="inline-flex items-center px-1.5 rounded-full text-[11px] bg-gray-900 text-white" id="navCommentBadge">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ================= 메인 레이아웃 ================= -->
+  <div class="flex-1 flex min-h-0 overflow-hidden">
+
+    <!-- ===== 좌측: 캔버스 폴더 목록 뷰 ===== -->
+    <!-- 너비는 아래 리사이저로 조절한다. 파일명이 길어 잘리는 경우에 대비한 것이므로 인라인 style로 둔다. -->
+    <aside id="canvasSidebar" class="bg-white border-r border-gray-200 flex flex-col flex-none overflow-y-auto" style="width:280px;">
+      <div class="p-4 border-b border-gray-100 flex items-center justify-between gap-2">
+        <h2 class="text-lg font-bold text-gray-900">캔버스</h2>
+        <span class="inline-flex items-center px-2 py-0.5 rounded-xl text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-700 flex-none" id="totalCanvasBadge">캔버스 0개</span>
+      </div>
+
+      <div class="p-3 grow" id="folderList">
+        <!-- 폴더 목록이 JS로 동적 생성됨 -->
+      </div>
+    </aside>
+
+    <!-- ===== 좌측: 이슈 계층 트리 뷰 (도메인 → 에픽 → 스토리) =====
+         캔버스 사이드바와 같은 자리를 쓴다. 너비도 리사이저가 함께 조절한다. -->
+    <aside id="issueSidebar" class="bg-white border-r border-gray-200 flex flex-col flex-none overflow-y-auto" style="width:280px; display:none;">
+      <div class="p-4 border-b border-gray-100 flex items-center justify-between gap-2">
+        <h2 class="text-lg font-bold text-gray-900">이슈</h2>
+        <span class="inline-flex items-center px-2 py-0.5 rounded-xl text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-700 flex-none" id="totalIssueBadge">이슈 0개</span>
+      </div>
+
+      <div class="p-3 grow" id="issueTree">
+        <!-- 이슈 트리가 JS로 동적 생성됨 -->
+      </div>
+    </aside>
+
+    <!-- 사이드바 너비 조절 손잡이 -->
+    <div id="sidebarResizer" title="드래그해서 사이드바 너비 조절"
+         class="w-1 flex-none cursor-col-resize bg-gray-200 hover:bg-blue-400 active:bg-blue-500 transition-colors"></div>
+
+    <!-- ===== 중앙: 캔버스 렌더 영역 ===== -->
+    <main id="canvasMain" class="flex-1 flex flex-col min-w-0 bg-gray-50 relative overflow-hidden">
+      <!-- 캔버스 상세 바 / 안내 -->
+      <div class="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between gap-3 text-xs text-gray-500">
+        <span class="flex items-center gap-2 min-w-0">
+          <span class="truncate" id="canvasStatusText">캔버스를 읽어오는 중...</span>
+          <!-- 확정 표시. 캔버스 html의 확정 meta를 목록 응답으로 받아 renderCanvasConfirmState가 채운다. -->
+          <span class="flex items-center gap-1 flex-none" id="canvasConfirmState"></span>
+        </span>
+        <!-- 현재 모드 안내. setCommentPanelOpen이 코멘트 모드/읽기 모드에 따라 갈아끼운다. -->
+        <!-- 확정 표시가 붙어 좁아져도 안내가 두 줄로 접히지 않게 한다 — 대신 왼쪽 경로가 줄어든다. -->
+        <span class="font-mono text-[11px] text-gray-400 flex-none whitespace-nowrap" id="canvasModeHint">읽기 모드 — 코멘트를 달려면 우측 상단 '코멘트'를 열어주세요</span>
+      </div>
+
+      <div class="flex-1 flex min-h-0 relative">
+        <!-- ===== 좌측 코멘트 패널 (슬라이드 뷰) ===== -->
+        <div id="commentPanel" class="w-[280px] bg-[#fffcf5] border-r border-dashed border-[#fdb022] flex-none shadow-lg transition-all duration-200" style="display:none; flex-direction:column;">
+          <div class="flex items-center justify-between px-3.5 py-2.5 border-b border-gray-200 bg-white">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold text-gray-800">코멘트</span>
+              <span class="text-xs text-gray-500" id="panelCommentCount">0개</span>
+            </div>
+            <button type="button" id="closeCommentPanelBtn" class="border border-gray-300 bg-white rounded text-[11px] text-gray-600 px-2 py-0.5 hover:bg-gray-50 cursor-pointer">닫기</button>
+          </div>
+
+          <!-- 필터 -->
+          <div class="flex items-center justify-between px-3.5 py-2 border-b border-gray-200 bg-white">
+            <label for="unresolvedOnly" class="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" id="unresolvedOnly" class="w-3.5 h-3.5 accent-emerald-600 cursor-pointer" />
+              <span class="text-[11px] font-semibold text-gray-700">미해결만 보기</span>
+            </label>
+            <span class="text-[10px] text-gray-400" id="resolvedHiddenCount"></span>
+          </div>
+
+          <!-- 코멘트 목록 -->
+          <div class="flex-1 overflow-y-auto p-2" id="commentListWrap">
+            <ul id="commentList" class="space-y-2"></ul>
+            <p id="commentEmpty" class="text-xs text-gray-500 text-center py-10 hidden">아직 코멘트가 없습니다</p>
+          </div>
+        </div>
+
+        <!-- 캔버스 HTML 원본 렌더링 프레임 -->
+        <div class="flex-1 h-full relative bg-white overflow-hidden">
+          <iframe id="canvasIframe" class="w-full h-full border-0"></iframe>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===== 중앙: 이슈 본문 영역 =====
+         캔버스 렌더 영역과 같은 자리를 쓴다. 이슈 문서는 열람 전용이라 코멘트 패널을 붙이지 않는다. -->
+    <main id="issueMain" class="flex-1 flex flex-col min-w-0 bg-gray-50 relative overflow-hidden" style="display:none;">
+      <div class="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between gap-2 text-xs text-gray-500">
+        <span class="font-mono truncate" id="issueCrumb">이슈를 선택하세요</span>
+        <span class="font-mono text-[11px] text-gray-400 flex-none">열람 전용 — 이슈 문서는 이 화면에서 수정하지 않습니다</span>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-6 py-5" id="issueBody"></div>
+    </main>
+  </div>
+
+  </div><!-- /#appShell -->
+
+  <!-- ================= 모드 선택 화면 =================
+       인증을 통과한 뒤 첫 화면. 두 모드 중 어디로 갈지 고르게 하고, 각 모드에서 마지막으로
+       본 문서를 함께 보여줘 "이어서 보기"로 바로 복귀할 수 있게 한다. -->
+  <div id="modeScreen" class="flex-1 flex flex-col items-center justify-center p-6" style="display:none;">
+    <div class="w-full max-w-3xl">
+      <div class="flex items-center justify-between mb-6 gap-3">
+        <div class="min-w-0">
+          <span class="text-xs font-bold tracking-wider text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded">ONE CANVAS</span>
+          <h1 class="text-xl font-bold text-gray-900 mt-3">어떤 모드로 시작할까요?</h1>
+          <p class="text-xs text-gray-500 mt-1" id="modeScreenWelcome"></p>
+        </div>
+        <button type="button" id="modeScreenLogoutBtn"
+                class="text-xs text-gray-500 hover:text-gray-900 underline cursor-pointer flex-none">로그아웃</button>
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2" id="modeCards">
+        <!-- 카드 2장이 JS로 채워진다 (renderModeCards) -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 회원가입 / 로그인 모달 ================= -->
+  <div id="authModal" class="fixed inset-0 z-50 bg-black/50 items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-xl max-w-sm w-full p-6 shadow-xl relative">
+      <button type="button" id="closeAuthModal" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-lg font-bold cursor-pointer">✕</button>
+
+      <!-- 비로그인 진입 시에는 이 모달이 곧 첫 화면이다. 어떤 서비스에 로그인하는지 보이게 한다. -->
+      <div class="mb-4">
+        <span class="text-xs font-bold tracking-wider text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded">ONE CANVAS</span>
+      </div>
+
+      <!-- 탭 바 -->
+      <div class="flex border-b border-gray-200 mb-4">
+        <button type="button" id="tabLogin" class="flex-1 pb-2 text-sm font-bold border-b-2 border-gray-900 text-gray-900 cursor-pointer">로그인</button>
+        <button type="button" id="tabJoin" class="flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-700 cursor-pointer">회원가입</button>
+      </div>
+
+      <!-- 로그인 폼 -->
+      <form id="loginForm" class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">이메일</label>
+          <input type="email" id="loginEmail" required class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">비밀번호</label>
+          <input type="password" id="loginPassword" required class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <p id="loginError" class="text-xs text-red-500 hidden"></p>
+        <button type="submit" class="w-full bg-gray-900 text-white rounded py-2 text-xs font-bold hover:bg-gray-800 cursor-pointer">로그인</button>
+      </form>
+
+      <!-- 회원가입 폼 -->
+      <form id="joinForm" class="space-y-3 hidden">
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">이메일</label>
+          <input type="email" id="joinEmail" placeholder="user@styleseller.co.kr" required class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <!-- 닉네임이 코멘트에 노출되는 이름이므로 이메일 바로 밑에 둔다. -->
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">닉네임</label>
+          <input type="text" id="joinNickname" placeholder="홍길동" required maxlength="100" class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+          <p class="text-[10px] text-gray-400 mt-1">코멘트에 이 이름으로 표시됩니다.</p>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">비밀번호</label>
+          <input type="password" id="joinPassword" placeholder="비밀번호" required class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <p id="joinError" class="text-xs text-red-500 hidden"></p>
+        <button type="submit" class="w-full bg-emerald-600 text-white rounded py-2 text-xs font-bold hover:bg-emerald-700 cursor-pointer">회원가입</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= 내 정보 모달 ================= -->
+  <!-- 이메일은 세션의 신원이자 코멘트가 참조하는 값이라 읽기 전용이다. 바꿀 수 있는 것은 닉네임과 비밀번호뿐. -->
+  <div id="profileModal" class="fixed inset-0 z-50 bg-black/50 items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-xl max-w-sm w-full p-6 shadow-xl relative">
+      <button type="button" id="closeProfileModal" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-lg font-bold cursor-pointer">✕</button>
+
+      <h3 class="text-sm font-bold text-gray-900 mb-4">내 정보</h3>
+
+      <!-- 이메일 (읽기 전용) -->
+      <div class="mb-4">
+        <label class="block text-xs font-semibold text-gray-700 mb-1">이메일</label>
+        <input type="email" id="profileEmail" disabled
+               class="w-full border border-gray-200 bg-gray-50 text-gray-500 rounded px-3 py-1.5 text-xs outline-none cursor-not-allowed" />
+        <p class="text-[10px] text-gray-400 mt-1">이메일은 변경할 수 없습니다.</p>
+      </div>
+
+      <!-- 닉네임 -->
+      <form id="profileNicknameForm" class="space-y-2 pb-4 border-b border-gray-100">
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">닉네임</label>
+          <input type="text" id="profileNickname" required maxlength="100"
+                 class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+          <p class="text-[10px] text-gray-400 mt-1">코멘트에 이 이름으로 표시됩니다. 이전에 쓴 코멘트에도 함께 반영됩니다.</p>
+        </div>
+        <p id="profileNicknameMsg" class="text-xs hidden"></p>
+        <button type="submit" id="profileNicknameSubmit"
+                class="w-full bg-gray-900 text-white rounded py-2 text-xs font-bold hover:bg-gray-800 cursor-pointer">닉네임 저장</button>
+      </form>
+
+      <!-- 비밀번호 변경 -->
+      <form id="profilePasswordForm" class="space-y-2 pt-4">
+        <p class="text-xs font-semibold text-gray-800">비밀번호 변경</p>
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">현재 비밀번호</label>
+          <input type="password" id="profileCurrentPassword" required autocomplete="current-password"
+                 class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">새 비밀번호</label>
+          <input type="password" id="profileNewPassword" required maxlength="255" autocomplete="new-password"
+                 class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">새 비밀번호 확인</label>
+          <input type="password" id="profileNewPasswordConfirm" required maxlength="255" autocomplete="new-password"
+                 class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <p id="profilePasswordMsg" class="text-xs hidden"></p>
+        <button type="submit" id="profilePasswordSubmit"
+                class="w-full bg-emerald-600 text-white rounded py-2 text-xs font-bold hover:bg-emerald-700 cursor-pointer">비밀번호 변경</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 애플리케이션 스크립트 -->
+  <script>
+    let currentFolder = '';
+    let currentFile = '';
+    // 로그인 여부/신원은 /api/members/me 가 정한다. 초기값은 비로그인이다.
+    let currentUser = { authenticated: false };
+    let commentsCache = [];
+    /**
+     * 코멘트 모드. '코멘트' 패널이 열려 있는 동안에만 켜진다.
+     * 켜져 있을 때만 캔버스 본문을 지목해 코멘트를 달 수 있고, 코멘트 아이콘도 표시된다.
+     * 꺼져 있으면 읽기 모드 — 캔버스는 그대로 읽을 수 있지만 지목/호버 가이드/코멘트 달기는 동작하지 않는다.
+     */
+    let commentModeOn = false;
+    // 아이콘을 그릴 대상. updateCommentsUI가 패널에 그린 목록과 같은 배열에서 만들어야
+    // 필터('미해결만 보기')를 켰을 때 패널과 캔버스가 어긋나지 않는다.
+    let markerComments = [];
+    let markerLayoutObserver = null;
+    let markerRelayoutTimer = null;
+    // 모드가 꺼질 때 iframe 안의 선택/입력창을 걷어내기 위한 핸들. attachIframeInteractions가 채운다.
+    let clearCanvasSelection = null;
+    // 사이드바 뱃지용 캔버스별 미해결 수. { 'folder/file.html': 3 } 꼴이고, 0인 캔버스는 키가 없다.
+    let unresolvedCounts = {};
+
+    /**
+     * 현재 보기 모드. 'canvas'(기획 캔버스) 또는 'issue'(애자일 이슈).
+     * 새로고침 복원은 주소의 해시가 담당한다(#/canvas/... , #/issue/...) — 모드뿐 아니라
+     * 보던 문서까지 함께 돌아온다.
+     */
+    let viewMode = 'canvas';
+    // 이슈 트리는 진입 시 한 번만 읽는다. 파일이 늘어도 새로고침 전까지는 같은 트리를 본다.
+    let issueTreeLoaded = false;
+    // 캔버스 목록도 같은 이유로 한 번만 읽는다. 모드를 오갈 때마다 다시 스캔하지 않는다.
+    let canvasListLoaded = false;
+    /** '폴더/파일.html' → 목록 응답의 캔버스 항목(확정 여부·시각·이슈 경로). fetchCanvases가 채운다. */
+    const canvasMetaByPath = new Map();
+
+    /**
+     * 이번 세션에서 각 모드에 마지막으로 연 문서. 모드 스위처로 돌아왔을 때 보던 문서를 되살린다.
+     * 새로고침 후 복원은 이 값이 아니라 주소의 해시가 담당한다.
+     */
+    const sessionLastPath = { canvas: '', issue: '' };
+
+    /**
+     * 로그인 후 돌아갈 위치. 인증이 없어 로그인 화면으로 보낼 때 원래 가려던 해시를 담아 두고,
+     * 로그인에 성공하면 그 자리로 돌려보낸다. 세션이 인메모리라 재배포마다 튕기는데,
+     * 그때 보던 화면으로 복귀시켜 체감을 줄이는 것이 목적이다.
+     */
+    let pendingHash = '';
+
+    // ===== 초기화 및 이벤트 바인딩 =====
+    // 데이터 조회는 여기서 시작하지 않는다. 인증을 먼저 확인하고 라우터가 화면을 정한 다음
+    // 그 화면에 필요한 것만 읽는다 — 비로그인 방문자가 캔버스 스캔을 유발하지 않게 하려는 것이다.
+    document.addEventListener('DOMContentLoaded', async () => {
+      document.getElementById('openCommentBtn').addEventListener('click', toggleCommentPanel);
+      document.getElementById('closeCommentPanelBtn').addEventListener('click', () => setCommentPanelOpen(false));
+      // 필터는 화면 표시만 바꾼다 — 서버 재조회 없이 캐시를 다시 렌더한다.
+      document.getElementById('unresolvedOnly').addEventListener('change', updateCommentsUI);
+
+      // '3분 전' 같은 상대 시각은 가만히 두면 낡는다. 카드를 다시 그리지 않고 시각 텍스트만 갱신한다
+      // (updateCommentsUI를 쓰면 작성 중인 답글 입력창이 날아간다).
+      setInterval(refreshCommentTimes, 60 * 1000);
+
+      // 창 크기가 바뀌면 블록 위치도 바뀌므로 아이콘을 다시 배치한다.
+      window.addEventListener('resize', scheduleMarkerRelayout);
+
+      initSidebarResizer();
+      initViewSwitch();
+
+      // Auth Modal Events
+      document.getElementById('openAuthModalBtn').addEventListener('click', () => setAuthModalOpen(true));
+      document.getElementById('closeAuthModal').addEventListener('click', () => setAuthModalOpen(false));
+      document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+
+      document.getElementById('tabLogin').addEventListener('click', () => switchAuthTab('login'));
+      document.getElementById('tabJoin').addEventListener('click', () => switchAuthTab('join'));
+
+      document.getElementById('loginForm').addEventListener('submit', handleLogin);
+      document.getElementById('joinForm').addEventListener('submit', handleJoin);
+
+      // Profile Modal Events
+      document.getElementById('openProfileModalBtn').addEventListener('click', () => setProfileModalOpen(true));
+      document.getElementById('closeProfileModal').addEventListener('click', () => setProfileModalOpen(false));
+      document.getElementById('profileNicknameForm').addEventListener('submit', handleNicknameUpdate);
+      document.getElementById('profilePasswordForm').addEventListener('submit', handlePasswordChange);
+
+      // 모드 선택 화면 진입로
+      document.getElementById('backToModesBtn').addEventListener('click', () => navigate('#/modes'));
+      document.getElementById('modeScreenLogoutBtn').addEventListener('click', handleLogout);
+
+      // 뒤로/앞으로와 새로고침이 같은 경로를 타게 한다.
+      window.addEventListener('hashchange', applyRoute);
+
+      await fetchCurrentUser();
+      await applyRoute();
+    });
+
+    // ===== 화면 라우팅 =====
+    // 새로고침해도 보던 화면으로 돌아오도록 위치를 주소에 남긴다.
+    //   #/modes                     모드 선택
+    //   #/canvas                    캔버스 모드(문서 미지정)
+    //   #/canvas/<폴더>/<파일>      캔버스 문서
+    //   #/issue                     이슈 모드(문서 미지정)
+    //   #/issue/<이슈 경로>         이슈 문서
+    // 해시가 없거나 알 수 없으면 모드 선택으로 본다 — 첫 진입은 모드를 고르는 화면이어야 한다.
+
+    function parseRoute() {
+      const parts = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+      const [head, ...rest] = parts;
+      const path = rest.map(decodeURIComponent).join('/');
+      if (head === 'canvas') return { screen: 'canvas', path };
+      if (head === 'issue') return { screen: 'issue', path };
+      return { screen: 'modes', path: '' };
+    }
+
+    /** 경로 구분자(/)는 그대로 두고 각 조각만 인코딩한다 — 주소에서 계층이 그대로 읽혀야 한다. */
+    function buildHash(mode, path) {
+      if (!path) return `#/${mode}`;
+      return `#/${mode}/${path.split('/').map(encodeURIComponent).join('/')}`;
+    }
+
+    function navigate(hash) {
+      if (location.hash === hash) {
+        // 같은 해시면 hashchange가 발생하지 않는다. 직접 다시 그린다.
+        applyRoute();
+        return;
+      }
+      location.hash = hash;
+    }
+
+    /**
+     * 주소만 바꾼다 — 문서를 열었을 때 그 위치를 주소에 반영하되 라우팅을 다시 태우지 않는다.
+     * replaceState는 hashchange를 발생시키지 않으므로 별도 가드가 필요 없다.
+     */
+    function replaceHash(hash) {
+      if (location.hash === hash) return;
+      history.replaceState(null, '', hash);
+    }
+
+    async function applyRoute() {
+      if (!isLoggedIn()) {
+        // 가려던 곳을 기억해 두고 로그인 화면으로 보낸다.
+        if (location.hash) pendingHash = location.hash;
+        showAuthScreen();
+        return;
+      }
+
+      const route = parseRoute();
+      if (route.screen === 'modes') {
+        await showModeScreen();
+        return;
+      }
+      await showWorkspace(route);
+    }
+
+    function showScreen(name) {
+      // 어느 화면이든 정해지는 순간 로딩 표시는 역할이 끝난다.
+      document.getElementById('bootScreen').style.display = 'none';
+      document.getElementById('appShell').style.display = name === 'workspace' ? 'flex' : 'none';
+      document.getElementById('modeScreen').style.display = name === 'modes' ? 'flex' : 'none';
+      setAuthModalOpen(name === 'auth');
+    }
+
+    function showAuthScreen() {
+      // 로그인 화면에서는 내 정보 모달처럼 로그인 뒤에야 의미 있는 것들을 함께 닫는다.
+      setProfileModalOpen(false);
+      switchAuthTab('login');
+      showScreen('auth');
+    }
+
+    async function showModeScreen() {
+      showScreen('modes');
+      document.getElementById('modeScreenWelcome').textContent =
+        `${currentUser.nickname || currentUser.email} 님으로 로그인되어 있습니다.`;
+      renderModeCards(await fetchLastViews());
+    }
+
+    async function showWorkspace(route) {
+      showScreen('workspace');
+      setViewMode(route.screen);
+
+      if (route.screen === 'canvas') {
+        await enterCanvasMode(route.path);
+      } else {
+        await enterIssueMode(route.path);
+      }
+    }
+
+    /** @param path 'folder/file.html'. 비어 있으면 이번 세션에 보던 것 → 없으면 첫 캔버스. */
+    async function enterCanvasMode(path) {
+      const target = path || sessionLastPath.canvas;
+      if (!canvasListLoaded) {
+        await fetchCanvases(target);
+        return;
+      }
+      if (target && `${currentFolder}/${currentFile}` !== target) {
+        const slash = target.lastIndexOf('/');
+        if (slash > 0) loadCanvas(target.substring(0, slash), target.substring(slash + 1));
+      }
+    }
+
+    async function enterIssueMode(path) {
+      if (!issueTreeLoaded) await fetchIssueTree();
+
+      const target = path || sessionLastPath.issue;
+      if (target && target !== currentIssuePath) {
+        openIssuePath(target);
+      } else if (!currentIssuePath) {
+        renderIssueEmpty();
+      }
+    }
+
+    // ===== 모드 선택 화면 =====
+
+    async function fetchLastViews() {
+      try {
+        const res = await fetch('/api/members/me/last-views');
+        if (res.status === 401) {
+          await fetchCurrentUser();
+          showAuthScreen();
+          return [];
+        }
+        if (!res.ok) return [];
+        return await res.json();
+      } catch (e) {
+        // 기록을 못 읽어도 모드는 고를 수 있어야 한다 — 카드는 '방문 기록 없음'으로 그린다.
+        console.error('최근 위치 조회 실패', e);
+        return [];
+      }
+    }
+
+    const MODE_META = {
+      canvas: { title: '캔버스 모드', desc: '기획 통합캔버스를 보고 코멘트를 남깁니다.', icon: '🖼️' },
+      issue: { title: '이슈 모드', desc: '애자일 이슈(에픽·스토리) 문서를 열람합니다.', icon: '🗂️' }
+    };
+
+    function renderModeCards(lastViews) {
+      const byMode = {};
+      (lastViews || []).forEach(v => { if (!byMode[v.mode]) byMode[v.mode] = v; });
+      // 목록은 최근순이므로 첫 항목이 마지막으로 머문 모드다.
+      const recentMode = (lastViews && lastViews.length) ? lastViews[0].mode : null;
+
+      const container = document.getElementById('modeCards');
+      container.innerHTML = '';
+
+      ['canvas', 'issue'].forEach(mode => {
+        const meta = MODE_META[mode];
+        const last = byMode[mode];
+        const isRecent = mode === recentMode;
+
+        const card = document.createElement('div');
+        card.className = `bg-white rounded-xl border p-5 shadow-sm flex flex-col ${
+          isRecent ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-gray-200'
+        }`;
+        card.innerHTML = `
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <p class="text-sm font-bold text-gray-900">${meta.icon} ${meta.title}</p>
+              <p class="text-xs text-gray-500 mt-1">${meta.desc}</p>
+            </div>
+            ${isRecent ? '<span class="flex-none text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500 text-white">최근</span>' : ''}
+          </div>
+
+          <div class="mt-4 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 min-h-[54px] flex flex-col justify-center">
+            ${last ? `
+              <p class="text-[10px] text-gray-400">마지막으로 본 문서</p>
+              <p class="text-xs font-semibold text-gray-800 truncate" title="${escapeHtml(last.targetPath)}">${escapeHtml(last.targetLabel)}</p>
+              <p class="text-[10px] text-gray-400 mt-0.5" title="${escapeHtml(formatAbsoluteTime(last.updatedAt))}">${escapeHtml(formatRelativeTime(last.updatedAt))}</p>
+            ` : '<p class="text-xs text-gray-400">아직 방문 기록이 없습니다</p>'}
+          </div>
+
+          <div class="mt-4 flex items-center gap-2">
+            ${last ? `
+              <button type="button" class="mode-resume flex-1 bg-gray-900 text-white rounded py-2 text-xs font-bold hover:bg-gray-800 cursor-pointer">이어서 보기</button>
+              <button type="button" class="mode-fresh border border-gray-300 text-gray-700 rounded px-3 py-2 text-xs font-semibold hover:bg-gray-50 cursor-pointer">처음부터</button>
+            ` : `
+              <button type="button" class="mode-fresh flex-1 bg-gray-900 text-white rounded py-2 text-xs font-bold hover:bg-gray-800 cursor-pointer">시작하기</button>
+            `}
+          </div>
+        `;
+
+        card.querySelector('.mode-resume')?.addEventListener('click', () => navigate(buildHash(mode, last.targetPath)));
+        card.querySelector('.mode-fresh')?.addEventListener('click', () => navigate(buildHash(mode, '')));
+        container.appendChild(card);
+      });
+    }
+
+    /**
+     * 지금 보고 있는 위치를 서버에 남긴다. 다음 접속 때 모드 선택 화면이 "이어서 보기"로 제시한다.
+     * 화면을 막지 않는 부수 작업이라 실패해도 조용히 넘어간다.
+     */
+    function recordLastView(mode, targetPath, targetLabel) {
+      if (!isLoggedIn() || !targetPath) return;
+      fetch('/api/members/me/last-view', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, targetPath, targetLabel })
+      }).catch(e => console.error('최근 위치 기록 실패', e));
+    }
+
+    function setAuthModalOpen(open) {
+      const modal = document.getElementById('authModal');
+      modal.style.display = open ? 'flex' : 'none';
+      // 진입 화면으로 떠 있을 때는 닫아도 갈 곳이 없으므로 닫기를 감춘다. 작업 중 세션이 끊겨
+      // 위에 겹쳐 뜬 경우에는 뒤에 돌아갈 화면이 있으므로 닫기를 남긴다.
+      const hasScreenBehind = document.getElementById('appShell').style.display !== 'none'
+        || document.getElementById('modeScreen').style.display !== 'none';
+      document.getElementById('closeAuthModal').classList.toggle('hidden', !hasScreenBehind);
+    }
+
+    // ===== 사용자 인증 처리 =====
+    async function fetchCurrentUser() {
+      try {
+        const res = await fetch('/api/members/me');
+        if (res.ok) currentUser = await res.json();
+      } catch (e) {
+        // 조회가 실패하면 로그인 상태를 확인할 수 없다 → 비로그인으로 다룬다(쓰기는 서버가 401로 막는다).
+        currentUser = { authenticated: false };
+      }
+      // 성공/실패 어느 쪽이든 화면을 현재 상태에 맞춘다.
+      updateUserUI();
+    }
+
+    /** 로그인 여부. 서버(/api/members/me)가 정하고, 화면과 쓰기 동작이 모두 이 값을 따른다. */
+    function isLoggedIn() {
+      return !!(currentUser && currentUser.authenticated);
+    }
+
+    function updateUserUI() {
+      const avatar = document.getElementById('userAvatar');
+      const userId = document.getElementById('userId');
+      const profileBtn = document.getElementById('openProfileModalBtn');
+
+      if (isLoggedIn()) {
+        userId.textContent = currentUser.email;
+        avatar.textContent = (currentUser.nickname || currentUser.email || 'K').charAt(0).toUpperCase();
+      } else {
+        // 로그아웃 상태에서 프로필이 그대로 남아 있으면 로그아웃이 안 된 것처럼 보인다.
+        userId.textContent = '비로그인';
+        // 비로그인이면 열 정보가 없다 — 모달 진입로도 함께 닫는다.
+        setProfileModalOpen(false);
+      }
+
+      profileBtn.classList.toggle('hidden', !isLoggedIn());
+      // 'hidden' 클래스로 감출 수 없는 요소다 — 원래 클래스가 'hidden sm:inline'이라
+      // 640px 이상에서는 sm:inline이 이겨 로그인 상태에도 '비로그인'이 이메일 옆에 남는다.
+      // 감출 때만 인라인 style로 덮고, 보일 때는 비워서 반응형 규칙을 그대로 살린다.
+      document.getElementById('userIdGuest').style.display = isLoggedIn() ? 'none' : '';
+      document.getElementById('logoutBtn').classList.toggle('hidden', !isLoggedIn());
+      document.getElementById('openAuthModalBtn').classList.toggle('hidden', isLoggedIn());
+    }
+
+    // ===== 내 정보 모달 =====
+    /** 모달을 열 때마다 현재 값으로 되돌린다 — 지난번에 입력하다 만 값이 남아 있으면 안 된다. */
+    function setProfileModalOpen(open) {
+      const modal = document.getElementById('profileModal');
+      if (open) {
+        if (!requireLoginOrPrompt('내 정보를 보려면 로그인해주세요.')) return;
+
+        document.getElementById('profileEmail').value = currentUser.email || '';
+        document.getElementById('profileNickname').value = currentUser.nickname || '';
+        document.getElementById('profileCurrentPassword').value = '';
+        document.getElementById('profileNewPassword').value = '';
+        document.getElementById('profileNewPasswordConfirm').value = '';
+        setProfileMessage('profileNicknameMsg', '', null);
+        setProfileMessage('profilePasswordMsg', '', null);
+      }
+      modal.style.display = open ? 'flex' : 'none';
+    }
+
+    /** 성공/실패를 같은 자리에 색만 달리해 보여준다. type이 null이면 숨긴다. */
+    function setProfileMessage(elementId, message, type) {
+      const el = document.getElementById(elementId);
+      el.textContent = message;
+      el.className = type === 'error'
+        ? 'text-xs text-red-500'
+        : 'text-xs text-emerald-600';
+      el.classList.toggle('hidden', !type);
+    }
+
+    // 답글과 같은 이유로 재진입을 막는다 — 응답을 기다리는 동안 한 번 더 제출되면 요청이 두 번 나간다.
+    let nicknameSubmitting = false;
+
+    async function handleNicknameUpdate(e) {
+      e.preventDefault();
+      if (nicknameSubmitting) return;
+
+      const nickname = document.getElementById('profileNickname').value.trim();
+      if (!nickname) {
+        setProfileMessage('profileNicknameMsg', '닉네임을 입력해주세요.', 'error');
+        return;
+      }
+
+      const submitBtn = document.getElementById('profileNicknameSubmit');
+      nicknameSubmitting = true;
+      submitBtn.disabled = true;
+      try {
+        const res = await fetch('/api/members/me', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nickname })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          setProfileMessage('profileNicknameMsg', '닉네임을 저장했습니다.', 'success');
+          // 상단 바(이름/이니셜)를 새 값으로 맞춘다.
+          await fetchCurrentUser();
+          // 코멘트 작성자 이름은 서버가 member에서 읽어오므로 이미 바뀌었지만,
+          // 브라우저 캐시는 옛 이름이라 다시 받아야 화면에 반영된다.
+          if (currentFolder && currentFile) {
+            await fetchComments(`${currentFolder}/${currentFile}`);
+          }
+        } else if (res.status === 401) {
+          await fetchCurrentUser();
+          requireLoginOrPrompt(data.message || '로그인이 필요합니다.');
+        } else {
+          setProfileMessage('profileNicknameMsg', data.message || '닉네임 저장 실패', 'error');
+        }
+      } catch (err) {
+        setProfileMessage('profileNicknameMsg', '서버 통신 실패', 'error');
+      } finally {
+        nicknameSubmitting = false;
+        submitBtn.disabled = false;
+      }
+    }
+
+    let passwordSubmitting = false;
+
+    async function handlePasswordChange(e) {
+      e.preventDefault();
+      if (passwordSubmitting) return;
+
+      const currentPassword = document.getElementById('profileCurrentPassword').value;
+      const newPassword = document.getElementById('profileNewPassword').value;
+      const confirmPassword = document.getElementById('profileNewPasswordConfirm').value;
+
+      if (!currentPassword || !newPassword) {
+        setProfileMessage('profilePasswordMsg', '현재 비밀번호와 새 비밀번호를 입력해주세요.', 'error');
+        return;
+      }
+      // 오타로 바뀐 비밀번호는 본인도 모르므로, 서버에 보내기 전에 여기서 막는다.
+      if (newPassword !== confirmPassword) {
+        setProfileMessage('profilePasswordMsg', '새 비밀번호가 서로 일치하지 않습니다.', 'error');
+        return;
+      }
+
+      const submitBtn = document.getElementById('profilePasswordSubmit');
+      passwordSubmitting = true;
+      submitBtn.disabled = true;
+      try {
+        const res = await fetch('/api/members/me/password', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPassword, newPassword })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          setProfileMessage('profilePasswordMsg', '비밀번호를 변경했습니다.', 'success');
+          // 바뀐 비밀번호가 입력칸에 남아 있을 이유가 없다.
+          document.getElementById('profileCurrentPassword').value = '';
+          document.getElementById('profileNewPassword').value = '';
+          document.getElementById('profileNewPasswordConfirm').value = '';
+        } else if (res.status === 401) {
+          await fetchCurrentUser();
+          requireLoginOrPrompt(data.message || '로그인이 필요합니다.');
+        } else {
+          setProfileMessage('profilePasswordMsg', data.message || '비밀번호 변경 실패', 'error');
+        }
+      } catch (err) {
+        setProfileMessage('profilePasswordMsg', '서버 통신 실패', 'error');
+      } finally {
+        passwordSubmitting = false;
+        submitBtn.disabled = false;
+      }
+    }
+
+    /** 쓰기 동작 앞에서 부른다. 로그인 상태가 아니면 로그인 창을 띄우고 false를 돌려준다. */
+    function requireLoginOrPrompt(message) {
+      if (isLoggedIn()) return true;
+      switchAuthTab('login');
+      setAuthModalOpen(true);
+      const errEl = document.getElementById('loginError');
+      errEl.textContent = message || '로그인이 필요합니다.';
+      errEl.classList.remove('hidden');
+      return false;
+    }
+
+    async function handleLogout() {
+      const btn = document.getElementById('logoutBtn');
+      btn.disabled = true;
+      try {
+        await fetch('/api/members/logout', { method: 'POST' });
+      } catch (e) {
+        // 세션 무효화 요청이 실패해도 화면은 로그아웃 상태로 맞춘다. 다시 로그인하면 세션이 새로 잡힌다.
+        console.error('로그아웃 요청 실패', e);
+      } finally {
+        btn.disabled = false;
+      }
+      // 로그아웃 후 표시할 사용자는 서버가 정한다.
+      await fetchCurrentUser();
+
+      // 다음 사람이 같은 브라우저로 로그인했을 때 앞사람이 보던 목록·트리가 남아 있으면 안 된다.
+      canvasListLoaded = false;
+      canvasMetaByPath.clear();
+      issueTreeLoaded = false;
+      currentFolder = '';
+      currentFile = '';
+      currentIssuePath = '';
+      sessionLastPath.canvas = '';
+      sessionLastPath.issue = '';
+      commentsCache = [];
+      unresolvedCounts = {};
+      pendingHash = '';
+
+      replaceHash('#/modes');
+      showAuthScreen();
+    }
+
+    function switchAuthTab(tab) {
+      const loginForm = document.getElementById('loginForm');
+      const joinForm = document.getElementById('joinForm');
+      const tabLogin = document.getElementById('tabLogin');
+      const tabJoin = document.getElementById('tabJoin');
+
+      if (tab === 'login') {
+        loginForm.classList.remove('hidden');
+        joinForm.classList.add('hidden');
+        tabLogin.className = 'flex-1 pb-2 text-sm font-bold border-b-2 border-gray-900 text-gray-900 cursor-pointer';
+        tabJoin.className = 'flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-700 cursor-pointer';
+      } else {
+        loginForm.classList.add('hidden');
+        joinForm.classList.remove('hidden');
+        tabJoin.className = 'flex-1 pb-2 text-sm font-bold border-b-2 border-emerald-600 text-emerald-600 cursor-pointer';
+        tabLogin.className = 'flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-700 cursor-pointer';
+      }
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const email = document.getElementById('loginEmail').value;
+      const password = document.getElementById('loginPassword').value;
+      const errEl = document.getElementById('loginError');
+      errEl.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/members/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          currentUser = { email: data.email, nickname: data.nickname, authenticated: true };
+          updateUserUI();
+
+          // 세션이 끊겨 로그인 화면으로 밀려났던 경우에는 보던 자리로 돌려보낸다.
+          const back = pendingHash;
+          pendingHash = '';
+          if (back) {
+            navigate(back);
+          } else if (document.getElementById('appShell').style.display !== 'none'
+                  || document.getElementById('modeScreen').style.display !== 'none') {
+            // 작업 화면 위에 겹쳐 떴던 경우(코멘트를 쓰려다 세션이 끊긴 경우) — 그 자리에 머문다.
+            setAuthModalOpen(false);
+          } else {
+            // 첫 진입이면 모드 선택이 먼저다.
+            navigate('#/modes');
+          }
+        } else {
+          errEl.textContent = data.message || '로그인 실패';
+          errEl.classList.remove('hidden');
+        }
+      } catch (err) {
+        errEl.textContent = '서버 통신 오류';
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    async function handleJoin(e) {
+      e.preventDefault();
+      const email = document.getElementById('joinEmail').value;
+      const password = document.getElementById('joinPassword').value;
+      const nickname = document.getElementById('joinNickname').value;
+      const errEl = document.getElementById('joinError');
+      errEl.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/members/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, nickname })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          alert('회원가입이 완료되었습니다! 로그인 해주세요.');
+          switchAuthTab('login');
+        } else {
+          errEl.textContent = data.message || '회원가입 실패';
+          errEl.classList.remove('hidden');
+        }
+      } catch (err) {
+        errEl.textContent = '서버 통신 오류';
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    // ===== 캔버스 목록 조회 =====
+    /** @param preferredPath 'folder/file.html'. 목록에 있으면 그 캔버스를, 없으면 첫 캔버스를 연다. */
+    async function fetchCanvases(preferredPath) {
+      try {
+        const res = await fetch('/api/canvases');
+        if (res.status === 401) {
+          await handleUnauthorized();
+          return;
+        }
+        const data = await res.json();
+
+        canvasListLoaded = true;
+        document.getElementById('totalCanvasBadge').textContent = '캔버스 ' + data.totalCanvasCount + '개';
+
+        // 확정 정보는 목록 응답에 이미 실려 온다 — 문서를 열 때마다 다시 묻지 않도록 여기서 보관한다.
+        canvasMetaByPath.clear();
+        (data.folders || []).forEach(folder => {
+          (folder.canvases || []).forEach(c => canvasMetaByPath.set(`${folder.name}/${c.name}`, c));
+        });
+
+        renderFolderList(data.folders);
+
+        // 복원 대상이 실제로 있는지 목록으로 확인한다 — 지워진 캔버스를 가리키는 주소로 들어올 수 있다.
+        const found = preferredPath && data.folders
+          .flatMap(folder => (folder.canvases || []).map(c => ({ folder: folder.name, file: c.name })))
+          .find(entry => `${entry.folder}/${entry.file}` === preferredPath);
+
+        if (found) {
+          loadCanvas(found.folder, found.file);
+        } else if (data.folders.length > 0 && data.folders[0].canvases.length > 0) {
+          loadCanvas(data.folders[0].name, data.folders[0].canvases[0].name);
+        }
+      } catch (e) {
+        console.error('캔버스 목록 조회 실패', e);
+      }
+    }
+
+    /**
+     * 세션이 끊긴 상태로 API를 부른 경우. 인메모리 세션이라 재배포·스케일아웃 때 일어난다.
+     * 보던 위치를 pendingHash에 남기고 로그인 화면으로 보낸다 — 로그인하면 그 자리로 돌아온다.
+     */
+    async function handleUnauthorized() {
+      await fetchCurrentUser();
+      if (location.hash) pendingHash = location.hash;
+      showAuthScreen();
+    }
+
+    function renderFolderList(folders) {
+      const container = document.getElementById('folderList');
+      container.innerHTML = '';
+
+      folders.forEach((folder, fi) => {
+        const foldWrap = document.createElement('div');
+        foldWrap.className = 'mb-2 border border-gray-100 rounded-lg overflow-hidden';
+
+        const headBtn = document.createElement('button');
+        headBtn.type = 'button';
+        headBtn.className = 'w-full flex items-center justify-between p-2 text-left bg-gray-50 hover:bg-gray-100 text-xs font-semibold text-gray-800 cursor-pointer';
+        headBtn.setAttribute('aria-expanded', 'true');
+        headBtn.innerHTML = `
+          <div class="flex items-center gap-1.5 font-mono min-w-0">
+            <span class="caret text-gray-400 flex-none">▾</span>
+            <span class="truncate">${folder.name}</span>
+          </div>
+        `;
+
+        const itemList = document.createElement('ul');
+        itemList.className = 'divide-y divide-gray-100 bg-white';
+
+        folder.canvases.forEach((canvas) => {
+          const file = canvas.name;
+          // 한글 타이틀은 캔버스 HTML의 <title>에서 뽑아온다. 없는 캔버스는 파일명만 보여준다.
+          const title = canvas.title || '';
+          const li = document.createElement('li');
+          const itemBtn = document.createElement('button');
+          itemBtn.type = 'button';
+          itemBtn.className = 'canvas-item-btn w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-blue-50 flex items-center justify-between gap-2 cursor-pointer';
+          itemBtn.dataset.folder = folder.name;
+          itemBtn.dataset.file = file;
+          // 사이드바를 좁혀 이름이 잘려도 툴팁으로 전체 이름을 확인할 수 있게 둔다.
+          const confirmNote = canvas.confirmed
+            ? `\n확정${canvas.confirmedAt ? ' · ' + formatCanvasTime(canvas.confirmedAt, true) : ''}`
+            : '';
+          itemBtn.title = (title ? `${file}\n${title}` : file) + confirmNote;
+          // 말풍선과 미해결 뱃지는 코멘트 모드에서만 채워진다(updateSidebarCommentBadges).
+          itemBtn.innerHTML = `
+            <span class="min-w-0 flex-1">
+              <span class="block truncate font-mono">${escapeHtml(file)}</span>
+              ${title ? `<span class="block truncate text-[11px] text-gray-500 mt-0.5">${escapeHtml(title)}</span>` : ''}
+            </span>
+            <span class="flex items-center gap-1 flex-none">
+              ${canvas.confirmed ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 border border-emerald-200 text-emerald-700 leading-none">확정</span>' : ''}
+              <span class="canvas-unresolved-icon hidden text-[11px] leading-none">🗨️</span>
+              <span class="canvas-unresolved-badge hidden items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold bg-amber-400 text-gray-900"></span>
+              <span class="text-gray-300">›</span>
+            </span>
+          `;
+
+          itemBtn.addEventListener('click', () => loadCanvas(folder.name, file));
+          li.appendChild(itemBtn);
+          itemList.appendChild(li);
+        });
+
+        headBtn.addEventListener('click', () => {
+          const isExpanded = headBtn.getAttribute('aria-expanded') === 'true';
+          headBtn.setAttribute('aria-expanded', String(!isExpanded));
+          headBtn.querySelector('.caret').textContent = isExpanded ? '▸' : '▾';
+          itemList.classList.toggle('hidden', isExpanded);
+        });
+
+        foldWrap.appendChild(headBtn);
+        foldWrap.appendChild(itemList);
+        container.appendChild(foldWrap);
+      });
+
+      // 목록을 다시 그리면 뱃지 DOM도 새로 만들어지므로 현재 수치를 다시 입힌다.
+      updateSidebarCommentBadges();
+    }
+
+    // ===== 사이드바 너비 조절 =====
+    // 캔버스 파일명이 길면 280px에서 잘린다. 손잡이를 끌어 넓힐 수 있게 한다.
+    const SIDEBAR_MIN_WIDTH = 180;
+    const SIDEBAR_MAX_WIDTH = 720;
+    const SIDEBAR_WIDTH_KEY = 'oc.sidebarWidth';
+
+    function initSidebarResizer() {
+      // 캔버스·이슈 사이드바가 같은 자리를 번갈아 쓰므로 너비도 함께 맞춘다 —
+      // 한쪽만 조절되면 모드를 바꿀 때마다 본문 폭이 튄다.
+      const sidebars = [document.getElementById('canvasSidebar'), document.getElementById('issueSidebar')];
+      const resizer = document.getElementById('sidebarResizer');
+      let dragging = false;
+
+      function setSidebarWidth(width) {
+        sidebars.forEach(el => { if (el) el.style.width = `${width}px`; });
+      }
+
+      // 지난 조절값을 복원한다 — 매번 다시 끌어야 하면 조절 기능이 의미가 없다.
+      try {
+        const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+        if (saved >= SIDEBAR_MIN_WIDTH && saved <= SIDEBAR_MAX_WIDTH) {
+          setSidebarWidth(saved);
+        }
+      } catch (e) {}
+
+      resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        dragging = true;
+        // iframe이 마우스 이벤트를 먹으므로, 포인터가 캔버스 위로 들어가면 드래그가 끊긴다.
+        const iframe = document.getElementById('canvasIframe');
+        if (iframe) iframe.style.pointerEvents = 'none';
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'col-resize';
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const visible = sidebars.find(el => el && el.style.display !== 'none') || sidebars[0];
+        const left = visible.getBoundingClientRect().left;
+        const width = Math.max(SIDEBAR_MIN_WIDTH, Math.min(e.clientX - left, SIDEBAR_MAX_WIDTH));
+        setSidebarWidth(width);
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        const iframe = document.getElementById('canvasIframe');
+        if (iframe) iframe.style.pointerEvents = '';
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+
+        try {
+          localStorage.setItem(SIDEBAR_WIDTH_KEY, String(parseInt(sidebars[0].style.width, 10)));
+        } catch (e) {}
+
+        // 사이드바 폭이 바뀌면 캔버스 폭도 바뀐다 → 코멘트 아이콘 위치를 다시 잡는다.
+        scheduleMarkerRelayout();
+      });
+    }
+
+    // ===== 보기 전환 (캔버스 보기 / 이슈 보기) =====
+    // 스위처는 최상단 네비 좌측 상단, 서비스 배지 바로 옆에 둔다. 전환되는 것은 좌측 사이드와
+    // 본문 두 영역이고 네비 바 자체는 두 모드에서 같은 자리에 남는다.
+
+    // 스위처는 화면을 직접 바꾸지 않고 주소를 바꾼다. 표시 전환은 라우터를 거쳐 한 곳에서만 일어난다.
+    // 이번 세션에 그 모드에서 보던 문서가 있으면 그 문서로 돌아간다.
+    function initViewSwitch() {
+      document.querySelectorAll('#viewSwitch .view-switch-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.mode;
+          navigate(buildHash(mode, sessionLastPath[mode] || ''));
+        });
+      });
+    }
+
+    function setViewMode(mode) {
+      viewMode = mode === 'issue' ? 'issue' : 'canvas';
+
+      const isIssue = viewMode === 'issue';
+
+      // 코멘트는 캔버스 보기의 기능이다. 이슈 보기로 넘어가면 패널을 닫아 두 모드가 섞이지 않게 한다.
+      if (isIssue && commentModeOn) setCommentPanelOpen(false);
+
+      document.getElementById('canvasSidebar').style.display = isIssue ? 'none' : '';
+      document.getElementById('canvasMain').style.display = isIssue ? 'none' : '';
+      document.getElementById('issueSidebar').style.display = isIssue ? '' : 'none';
+      document.getElementById('issueMain').style.display = isIssue ? '' : 'none';
+
+      // 코멘트 버튼은 자리를 비우지 않고(네비 배치가 두 모드에서 같아야 한다) 이슈 보기에서는 잠근다.
+      const commentBtn = document.getElementById('openCommentBtn');
+      commentBtn.disabled = isIssue;
+      commentBtn.title = isIssue ? '코멘트는 캔버스 보기에서 사용합니다' : '';
+      commentBtn.classList.toggle('opacity-40', isIssue);
+      commentBtn.classList.toggle('cursor-not-allowed', isIssue);
+      commentBtn.classList.toggle('cursor-pointer', !isIssue);
+
+      document.querySelectorAll('#viewSwitch .view-switch-btn').forEach(btn => {
+        const on = btn.dataset.mode === viewMode;
+        btn.setAttribute('aria-pressed', String(on));
+        btn.classList.toggle('bg-white', on);
+        btn.classList.toggle('text-gray-900', on);
+        btn.classList.toggle('text-gray-400', !on);
+        btn.classList.toggle('hover:text-white', !on);
+      });
+
+      // 배지 옆 문서 이름은 지금 보고 있는 모드의 문서를 가리킨다.
+      const navName = document.getElementById('navCanvasName');
+      if (isIssue) {
+        navName.textContent = currentIssuePath || '선택된 이슈 없음';
+      } else {
+        navName.textContent = (currentFolder && currentFile)
+          ? `${currentFolder}/${currentFile}`
+          : '선택된 캔버스 없음';
+      }
+
+      // 트리 조회와 문서 복원은 라우터(enterIssueMode)가 맡는다. 여기서는 표시 전환만 한다.
+    }
+
+    // ===== 이슈 보기: 계층 트리 (도메인 → 에픽 → 스토리) =====
+    // 트리 계층은 애자일 이슈의 디렉터리 계층을 그대로 따른다. 계층을 화면에서 새로 만들지 않는다.
+    let currentIssuePath = '';
+
+    async function fetchIssueTree() {
+      const treeEl = document.getElementById('issueTree');
+      try {
+        const res = await fetch('/api/issues');
+        if (res.status === 401) { await handleUnauthorized(); return; }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        issueTreeLoaded = true;
+        renderIssueTree(data.domains || []);
+        document.getElementById('totalIssueBadge').textContent =
+          `에픽 ${data.totalEpicCount || 0} · 스토리 ${data.totalStoryCount || 0}`;
+        if (!currentIssuePath) renderIssueEmpty();
+      } catch (e) {
+        console.error('이슈 목록 조회 실패', e);
+        treeEl.innerHTML = '<p class="text-xs text-red-500 px-1 py-2">이슈 목록을 읽지 못했습니다.</p>';
+        renderIssueMessage('이슈 목록을 읽지 못했습니다', '레포의 애자일 이슈 디렉터리를 읽을 수 없습니다. 잠시 후 새로고침해 주세요.', true);
+      }
+    }
+
+    function renderIssueTree(domains) {
+      const container = document.getElementById('issueTree');
+      container.innerHTML = '';
+
+      if (!domains.length) {
+        container.innerHTML = '<p class="text-xs text-gray-500 px-1 py-2">이슈 문서가 없습니다.</p>';
+        return;
+      }
+
+      domains.forEach(domain => {
+        const wrap = document.createElement('div');
+        wrap.className = 'mb-2 border border-gray-100 rounded-lg overflow-hidden';
+
+        // 도메인 노드는 하위 계층을 여닫는 역할만 한다 — 본문 랜딩 대상은 에픽·스토리다.
+        const domainBtn = document.createElement('button');
+        domainBtn.type = 'button';
+        domainBtn.className = 'w-full flex items-center gap-1.5 p-2 text-left bg-gray-50 hover:bg-gray-100 text-xs font-semibold text-gray-800 cursor-pointer';
+        domainBtn.setAttribute('aria-expanded', 'false');
+        domainBtn.title = domain.title ? `${domain.name}\n${domain.title}` : domain.name;
+        domainBtn.innerHTML = `
+          <span class="caret text-gray-400 flex-none">▸</span>
+          <span class="font-mono truncate">${escapeHtml(domain.name)}</span>
+          ${domain.title ? `<span class="text-gray-500 font-normal truncate">${escapeHtml(domain.title)}</span>` : ''}
+        `;
+
+        // 진입 시 트리는 전부 접혀 있다 — 이슈 수가 많아 특정 도메인을 목표로 들어오는 경우가 많다.
+        const epicWrap = document.createElement('div');
+        epicWrap.className = 'bg-white hidden';
+        domainBtn.addEventListener('click', () => {
+          const expanded = domainBtn.getAttribute('aria-expanded') === 'true';
+          domainBtn.setAttribute('aria-expanded', String(!expanded));
+          setIssueCaret(domainBtn, !expanded);
+          epicWrap.classList.toggle('hidden', expanded);
+        });
+
+        (domain.epics || []).forEach(epic => {
+          const epicPath = `${domain.name}/${epic.name}`;
+
+          const epicBtn = document.createElement('button');
+          epicBtn.type = 'button';
+          epicBtn.className = 'issue-node w-full flex items-center gap-1.5 pl-3 pr-2 py-1.5 text-left text-xs text-gray-700 hover:bg-blue-50 cursor-pointer border-t border-gray-100';
+          epicBtn.setAttribute('aria-expanded', 'false');
+          // 주소(#/issue/...)로 들어왔을 때 이 노드를 찾아 열기 위한 표식.
+          epicBtn.dataset.issuePath = epicPath;
+          epicBtn.title = epic.title ? `${epic.name}\n${epic.title}` : epic.name;
+          epicBtn.innerHTML = `
+            <span class="caret text-gray-400 flex-none">▸</span>
+            <span class="font-mono truncate">${escapeHtml(epic.name)}</span>
+          `;
+
+          const storyWrap = document.createElement('div');
+          storyWrap.className = 'hidden';
+
+          epicBtn.addEventListener('click', () => {
+            // 에픽 클릭은 본문 랜딩과 하위 스토리 펼침을 함께 한다 — 다음에 열 스토리를 바로 고를 수 있다.
+            // 이미 펼쳐진 에픽을 다시 누르면 접힌다(도메인과 같은 여닫기). 본문 랜딩은 어느 쪽이든 한다.
+            const expanded = epicBtn.getAttribute('aria-expanded') === 'true';
+            epicBtn.setAttribute('aria-expanded', String(!expanded));
+            setIssueCaret(epicBtn, !expanded);
+            storyWrap.classList.toggle('hidden', expanded);
+            markIssueCurrent(epicBtn);
+            loadIssueEpic(epicPath, domain, epic);
+          });
+
+          (epic.stories || []).forEach(story => {
+            const storyPath = `${epicPath}/${story.name}`;
+            const storyBtn = document.createElement('button');
+            storyBtn.type = 'button';
+            storyBtn.className = 'issue-node w-full flex items-center gap-1.5 pl-7 pr-2 py-1.5 text-left text-xs text-gray-600 hover:bg-blue-50 cursor-pointer';
+            storyBtn.dataset.issuePath = storyPath;
+            storyBtn.title = [story.name, story.title, story.status].filter(Boolean).join('\n');
+            storyBtn.innerHTML = `<span class="font-mono truncate">${escapeHtml(story.name)}</span>`;
+            storyBtn.addEventListener('click', () => {
+              markIssueCurrent(storyBtn);
+              loadIssueStory(storyPath, domain, epic, story);
+            });
+            storyWrap.appendChild(storyBtn);
+          });
+
+          epicWrap.appendChild(epicBtn);
+          epicWrap.appendChild(storyWrap);
+        });
+
+        wrap.appendChild(domainBtn);
+        wrap.appendChild(epicWrap);
+        container.appendChild(wrap);
+      });
+    }
+
+    function setIssueCaret(btn, expanded) {
+      const caret = btn.querySelector('.caret');
+      if (caret) caret.textContent = expanded ? '▾' : '▸';
+    }
+
+    /** 선택 표시는 상시 유지한다 — 지금 어느 이슈를 보고 있는지가 트리에서 바로 보여야 한다. */
+    function markIssueCurrent(btn) {
+      document.querySelectorAll('#issueTree .issue-node').forEach(el => {
+        el.removeAttribute('aria-current');
+        el.classList.remove('bg-blue-50', 'text-blue-600', 'font-bold');
+      });
+      btn.setAttribute('aria-current', 'true');
+      btn.classList.add('bg-blue-50', 'text-blue-600', 'font-bold');
+    }
+
+    // ===== 이슈 보기: 본문 =====
+
+    async function loadIssueEpic(path, domain, epic) {
+      setIssueLocation(path, [domain.name, epic.name]);
+      renderIssueMessage('불러오는 중…', '', false);
+      try {
+        const res = await fetch(`/api/issues/epic?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        renderEpicBody(await res.json());
+      } catch (e) {
+        console.error('에픽 조회 실패', e);
+        renderIssueMessage('이슈 문서를 읽지 못했습니다', `${path} 의 문서를 읽을 수 없습니다.`, true);
+      }
+    }
+
+    async function loadIssueStory(path, domain, epic, story) {
+      setIssueLocation(path, [domain.name, epic.name, story.name]);
+      renderIssueMessage('불러오는 중…', '', false);
+      try {
+        const res = await fetch(`/api/issues/story?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        renderStoryBody(await res.json());
+      } catch (e) {
+        console.error('스토리 조회 실패', e);
+        renderIssueMessage('이슈 문서를 읽지 못했습니다', `${path} 의 문서를 읽을 수 없습니다.`, true);
+      }
+    }
+
+    function setIssueLocation(path, crumbs) {
+      currentIssuePath = path;
+      document.getElementById('issueCrumb').textContent = crumbs.join(' / ');
+      document.getElementById('navCanvasName').textContent = path;
+
+      // 캔버스와 같은 규칙 — 주소는 새로고침 복원용, 서버 기록은 다음 접속의 '이어서 보기'용.
+      sessionLastPath.issue = path;
+      if (viewMode === 'issue') replaceHash(buildHash('issue', path));
+      // 라벨은 트리에서 보이는 이름(마지막 조각)을 쓴다. 경로 전체는 targetPath에 남는다.
+      recordLastView('issue', path, crumbs[crumbs.length - 1] || path);
+    }
+
+    /**
+     * 주소로 들어온 이슈 경로를 트리에서 찾아 연다. 트리 노드의 클릭 처리를 그대로 재사용하므로
+     * 본문 로딩·선택 표시가 직접 누른 것과 같아진다.
+     * @returns 찾아서 열었으면 true. 문서가 사라졌거나 경로가 잘못되면 false.
+     */
+    function openIssuePath(path) {
+      const btn = Array.from(document.querySelectorAll('#issueTree .issue-node'))
+        .find(el => el.dataset.issuePath === path);
+      if (!btn) {
+        renderIssueMessage('이슈를 찾을 수 없습니다', `${path} 가 트리에 없습니다. 좌측에서 다시 선택해주세요.`, true);
+        return false;
+      }
+      revealIssueNode(btn);
+      btn.click();
+      return true;
+    }
+
+    /** 트리는 접힌 채로 시작한다. 복원 대상의 조상 계층만 펼친다(대상 자신의 하위는 건드리지 않는다). */
+    function revealIssueNode(btn) {
+      let el = btn.parentElement;
+      while (el && el.id !== 'issueTree') {
+        if (el.classList.contains('hidden')) {
+          el.classList.remove('hidden');
+          const head = el.previousElementSibling;
+          if (head && head.tagName === 'BUTTON') {
+            head.setAttribute('aria-expanded', 'true');
+            setIssueCaret(head, true);
+          }
+        }
+        el = el.parentElement;
+      }
+    }
+
+    function renderIssueEmpty() {
+      renderIssueMessage('이슈를 선택하세요', '좌측에서 도메인을 펼쳐 에픽 또는 스토리를 고르면 여기에 내용이 표시됩니다.', false);
+    }
+
+    function renderIssueMessage(title, detail, isError) {
+      document.getElementById('issueBody').innerHTML = `
+        <div class="py-20 text-center">
+          <p class="text-sm font-bold ${isError ? 'text-red-600' : 'text-gray-700'}">${escapeHtml(title)}</p>
+          ${detail ? `<p class="text-xs text-gray-500 mt-1">${escapeHtml(detail)}</p>` : ''}
+        </div>
+      `;
+    }
+
+    /** 에픽 본문은 제목과 목적만 보여준다. 범위·완료 기준·흐름도는 이 화면의 범위가 아니다. */
+    function renderEpicBody(epic) {
+      document.getElementById('issueBody').innerHTML = `
+        ${issueHeadHtml('EPIC', epic.name, epic.title, '')}
+        ${issueSectionHtml('목적', epic.purpose
+          ? `<p class="text-sm text-gray-700 whitespace-pre-wrap">${escapeHtml(epic.purpose)}</p>`
+          : missingHtml())}
+      `;
+    }
+
+    /** 스토리 본문은 제목·상태·설명·수락 기준·태스크·테스트 6항목을 보여준다. */
+    function renderStoryBody(story) {
+      const acHtml = (story.acceptanceCriteria || []).length
+        ? `<ul class="space-y-1.5">${story.acceptanceCriteria.map(ac => `
+            <li class="flex gap-2 text-sm text-gray-700">
+              <span class="text-gray-400 flex-none font-mono">${ac.done ? '☑' : '☐'}</span>
+              ${ac.no ? `<span class="flex-none font-mono text-xs font-bold text-gray-900 mt-0.5">${escapeHtml(ac.no)}</span>` : ''}
+              <span>${escapeHtml(ac.text)}</span>
+            </li>`).join('')}</ul>`
+        : missingHtml();
+
+      const taskHtml = (story.taskGroups || []).length
+        ? story.taskGroups.map(group => `
+            <div class="mb-3 last:mb-0">
+              ${group.role ? `<p class="text-xs font-bold text-gray-500 mb-1.5">${escapeHtml(group.role)}</p>` : ''}
+              <ul class="space-y-1.5">${(group.tasks || []).map(task => `
+                <li class="flex gap-2 text-sm text-gray-700 items-start">
+                  ${taskMarkerHtml(task)}
+                  <span>${decorateTaskText(task.text)}</span>
+                </li>`).join('')}</ul>
+            </div>`).join('')
+        : missingHtml();
+
+      const tests = story.tests || { success: [], failure: [] };
+      const testHtml = (tests.success.length || tests.failure.length)
+        ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+             ${testColumnHtml('성공', tests.success, 'text-emerald-700')}
+             ${testColumnHtml('실패 (예외처리 포함)', tests.failure, 'text-red-700')}
+           </div>`
+        : missingHtml();
+
+      document.getElementById('issueBody').innerHTML = `
+        ${issueHeadHtml('STORY', story.name, story.title, storyMetaHtml(story))}
+        ${issueSectionHtml('설명', story.description
+          ? `<p class="text-sm text-gray-700 whitespace-pre-wrap">${escapeHtml(story.description)}</p>`
+          : missingHtml())}
+        ${issueSectionHtml('수락 기준', acHtml)}
+        ${issueSectionHtml('태스크', taskHtml)}
+        ${issueSectionHtml('테스트', testHtml)}
+      `;
+    }
+
+    function issueHeadHtml(kind, name, title, metaHtml) {
+      return `
+        <div class="border-b border-gray-200 pb-3 mb-5">
+          <span class="inline-block text-[10px] font-bold tracking-wider text-gray-500 border border-gray-300 rounded px-1.5 py-0.5 mb-1.5">${kind}</span>
+          <h3 class="text-base font-bold text-gray-900">
+            <span class="font-mono">${escapeHtml(stripIssuePrefix(name))}</span>
+            ${title ? `<span class="font-normal text-gray-600 text-sm">(${escapeHtml(title)})</span>` : ''}
+          </h3>
+          ${metaHtml}
+        </div>
+      `;
+    }
+
+    function issueSectionHtml(heading, bodyHtml) {
+      return `
+        <div class="mb-5">
+          <h4 class="text-xs font-bold text-gray-700 mb-1.5">${escapeHtml(heading)}</h4>
+          ${bodyHtml}
+        </div>
+      `;
+    }
+
+    /** 문서에 그 섹션이 없다는 사실을 그대로 보여준다 — 화면이 대신 내용을 채우지 않는다. */
+    function missingHtml() {
+      return '<p class="text-xs text-gray-400 italic">문서에 없습니다</p>';
+    }
+
+    function stripIssuePrefix(name) {
+      return String(name || '').replace(/^(epic|story)-/, '');
+    }
+
+    // 상태 값 체계(draft → ready → in-progress → done, changed-after-done)는 애자일 이슈 규칙이 소유한다.
+    // 화면은 값을 그대로 표시하고 새 상태를 만들지 않는다. 색과 한글 설명만 붙인다.
+    const ISSUE_STATUS_STYLE = {
+      'draft': { cls: 'bg-gray-100 border-gray-300 text-gray-600', label: '명세 작성 중' },
+      'ready': { cls: 'bg-blue-50 border-blue-200 text-blue-700', label: '명세 확정 · 개발 착수 가능' },
+      'in-progress': { cls: 'bg-amber-50 border-amber-200 text-amber-700', label: '개발 중' },
+      'done': { cls: 'bg-emerald-50 border-emerald-200 text-emerald-700', label: '개발 완료' },
+      'changed-after-done': { cls: 'bg-rose-50 border-rose-200 text-rose-700', label: '완료 후 기획 변경 — 재작업 필요' },
+    };
+
+    function storyMetaHtml(story) {
+      const style = ISSUE_STATUS_STYLE[story.status] || { cls: 'bg-gray-100 border-gray-300 text-gray-600', label: '' };
+      const status = story.status
+        ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-mono font-bold ${style.cls}" title="${escapeHtml(style.label)}">${escapeHtml(story.status)}</span>`
+        : '<span class="text-[11px] text-gray-400 italic">상태 없음</span>';
+      const updated = story.updated
+        ? `<span class="text-[11px] text-gray-500 font-mono">updated ${escapeHtml(story.updated)}</span>`
+        : '';
+      return `<div class="mt-2 flex items-center gap-2 flex-wrap">${status}${updated}</div>`;
+    }
+
+    const TASK_MARKER_STYLE = {
+      '완료': 'bg-emerald-50 border-emerald-200 text-emerald-700',
+      '진행중': 'bg-amber-50 border-amber-200 text-amber-700',
+      '생성됨': 'bg-gray-100 border-gray-300 text-gray-600',
+      '폐기됨': 'bg-red-50 border-red-200 text-red-700 line-through',
+    };
+
+    function taskMarkerHtml(task) {
+      if (!task.marker) {
+        return '<span class="flex-none text-gray-300 font-mono text-[10px] mt-1">—</span>';
+      }
+      const cls = TASK_MARKER_STYLE[task.marker] || 'bg-gray-100 border-gray-300 text-gray-600';
+      const text = task.markerAt ? `${task.marker} ${task.markerAt}` : task.marker;
+      return `<span class="flex-none mt-0.5 px-1.5 rounded border font-mono text-[10px] whitespace-nowrap ${cls}">${escapeHtml(text)}</span>`;
+    }
+
+    /**
+     * 태스크 줄 끝의 AC 참조와 UI 태그는 성격이 달라 색으로 구분한다.
+     * AC 참조는 이 태스크가 어느 수락 기준을 구현하는지, UI 태그는 어느 화면 영역인지를 가리킨다.
+     */
+    function decorateTaskText(text) {
+      return escapeHtml(text || '')
+        .replace(/\[ui:[^\]]*\]/g, m => `<span class="font-mono text-[11px] text-blue-600">${m}</span>`)
+        .replace(/\((AC\d+(?:,\s*AC\d+)*)\)/g, m => `<span class="font-mono text-[11px] text-gray-500">${m}</span>`);
+    }
+
+    function testColumnHtml(heading, items, headingCls) {
+      return `
+        <div>
+          <p class="text-xs font-bold mb-1.5 ${headingCls}">${escapeHtml(heading)}</p>
+          ${items.length
+            ? `<ul class="list-disc pl-4 space-y-1">${items.map(i => `<li class="text-sm text-gray-700">${escapeHtml(i)}</li>`).join('')}</ul>`
+            : missingHtml()}
+        </div>
+      `;
+    }
+
+    // ===== 사이드바 미해결 코멘트 뱃지 =====
+
+    /** 코멘트 모드에서만 의미가 있는 정보이므로 모드가 꺼져 있으면 조회하지 않는다. */
+    async function refreshUnresolvedCounts() {
+      if (!commentModeOn) return;
+      try {
+        const res = await fetch('/api/comments/unresolved-counts');
+        if (res.status === 401) { await handleUnauthorized(); return; }
+        if (!res.ok) return;
+        unresolvedCounts = await res.json();
+      } catch (e) {
+        console.error('미해결 코멘트 수 조회 실패', e);
+        return;
+      }
+      updateSidebarCommentBadges();
+    }
+
+    function updateSidebarCommentBadges() {
+      document.querySelectorAll('.canvas-item-btn').forEach(btn => {
+        const badge = btn.querySelector('.canvas-unresolved-badge');
+        const icon = btn.querySelector('.canvas-unresolved-icon');
+        if (!badge) return;
+
+        const path = `${btn.dataset.folder}/${btn.dataset.file}`;
+        const count = commentModeOn ? (unresolvedCounts[path] || 0) : 0;
+
+        // 0을 붙이면 목록이 시끄러워진다 — 볼 것이 남은 캔버스만 표시한다.
+        badge.textContent = count > 0 ? String(count) : '';
+        badge.title = count > 0 ? `미해결 코멘트 ${count}개` : '';
+        badge.classList.toggle('hidden', count === 0);
+        badge.classList.toggle('inline-flex', count > 0);
+
+        // 말풍선은 '남은 것이 있다'는 신호라 개수와 무관하게 하나만 붙는다.
+        if (icon) {
+          icon.title = badge.title;
+          icon.classList.toggle('hidden', count === 0);
+          icon.classList.toggle('inline-block', count > 0);
+        }
+      });
+    }
+
+    // ===== 캔버스 로드 및 프레임 주입 =====
+    // ===== 확정 표시 =====
+    // 확정 = 이 캔버스에서 애자일 이슈를 최초로 생성했다(one-canvas-rule.md 「확정 상태 기록」).
+    // 값은 캔버스 html의 meta에서 오고, one-tool은 읽기만 한다 — 여기서 확정을 걸거나 풀지 않는다.
+
+    /** 'agile-issue/partner-review/epic-x' → 'partner-review/epic-x' (이슈 API·라우팅이 쓰는 루트 기준 경로). */
+    function issueRoutePath(confirmedIssue) {
+      return (confirmedIssue || '').replace(/^agile-issue\//, '').replace(/^\/+|\/+$/g, '');
+    }
+
+    /** '2026-08-04T17:34:52+09:00' → '2026-08-04 17:34'. 못 읽는 값은 비운다(추측해서 보여주지 않는다). */
+    function formatCanvasTime(iso, withTime) {
+      const ms = Date.parse(iso || '');
+      if (Number.isNaN(ms)) return '';
+      const d = new Date(ms);
+      const pad = n => String(n).padStart(2, '0');
+      const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      return withTime ? `${day} ${pad(d.getHours())}:${pad(d.getMinutes())}` : day;
+    }
+
+    function renderCanvasConfirmState(relPath) {
+      const box = document.getElementById('canvasConfirmState');
+      if (!box) return;
+      box.innerHTML = '';
+
+      const meta = canvasMetaByPath.get(relPath);
+
+      // 수정일은 확정과 무관하게 모든 캔버스가 갖는 값이라 미확정에도 함께 보여준다.
+      const appendUpdated = () => {
+        const at = formatCanvasTime(meta && meta.updatedAt, false);
+        if (!at) return;
+        const tag = document.createElement('span');
+        tag.className = 'text-[11px] text-gray-400 flex-none';
+        tag.textContent = `수정 ${at}`;
+        tag.title = '캔버스를 마지막으로 고친 날입니다.';
+        box.appendChild(tag);
+      };
+
+      if (!meta || !meta.confirmed) {
+        const tag = document.createElement('span');
+        tag.className = 'px-1.5 py-0.5 rounded text-[11px] bg-gray-100 text-gray-500 flex-none';
+        tag.textContent = '미확정';
+        tag.title = '이 캔버스에서 생성된 애자일 이슈가 아직 없습니다.';
+        box.appendChild(tag);
+        appendUpdated();
+        return;
+      }
+
+      // 문자열 비교가 아니라 시각으로 비교한다 — 오프셋이 다르면(Z 등) 사전순 비교가 뒤집힌다.
+      const confirmedMs = Date.parse(meta.confirmedAt || '');
+      const updatedMs = Date.parse(meta.updatedAt || '');
+      const changedAfterConfirm = !Number.isNaN(confirmedMs) && !Number.isNaN(updatedMs) && updatedMs > confirmedMs;
+
+      const tag = document.createElement('span');
+      tag.className = 'px-1.5 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 border border-emerald-200 text-emerald-700 flex-none';
+      const at = formatCanvasTime(meta.confirmedAt, true);
+      tag.textContent = at ? `확정 · ${at}` : '확정';
+      tag.title = '이 캔버스에서 애자일 이슈를 최초로 생성한 시점입니다.';
+      box.appendChild(tag);
+
+      if (changedAfterConfirm) {
+        const changed = document.createElement('span');
+        changed.className = 'px-1.5 py-0.5 rounded text-[11px] bg-amber-50 border border-amber-200 text-amber-700 flex-none';
+        changed.textContent = `확정 후 수정됨 · ${formatCanvasTime(meta.updatedAt, false)}`;
+        changed.title = '확정 이후 캔버스가 바뀌었습니다. 이슈가 최신 캔버스와 맞는지 대조가 필요합니다.';
+        box.appendChild(changed);
+      }
+
+      const routePath = issueRoutePath(meta.confirmedIssue);
+      if (routePath) {
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'text-[11px] text-blue-600 hover:underline flex-none cursor-pointer';
+        link.textContent = '이슈 보기 →';
+        link.title = meta.confirmedIssue;
+        link.addEventListener('click', () => navigate(buildHash('issue', routePath)));
+        box.appendChild(link);
+      }
+    }
+
+    function loadCanvas(folder, file) {
+      currentFolder = folder;
+      currentFile = file;
+
+      // Active state highlight
+      document.querySelectorAll('.canvas-item-btn').forEach(btn => {
+        if (btn.dataset.folder === folder && btn.dataset.file === file) {
+          btn.setAttribute('aria-current', 'true');
+          btn.classList.add('bg-blue-50', 'text-blue-600', 'font-bold');
+        } else {
+          btn.removeAttribute('aria-current');
+          btn.classList.remove('bg-blue-50', 'text-blue-600', 'font-bold');
+        }
+      });
+
+      const relPath = `${folder}/${file}`;
+      // 이슈 보기 중이라면 네비의 문서 이름은 이슈 쪽이 차지한다 — 첫 캔버스 자동 선택이 그것을 덮지 않게 한다.
+      if (viewMode === 'canvas') {
+        document.getElementById('navCanvasName').textContent = relPath;
+      }
+      document.getElementById('canvasStatusText').textContent = relPath;
+      renderCanvasConfirmState(relPath);
+
+      // 지금 위치를 주소와 서버 기록에 함께 남긴다 — 새로고침 복원은 주소가, 다음 접속의
+      // '이어서 보기'는 서버 기록이 담당한다.
+      sessionLastPath.canvas = relPath;
+      if (viewMode === 'canvas') replaceHash(buildHash('canvas', relPath));
+      recordLastView('canvas', relPath, file);
+
+      const iframe = document.getElementById('canvasIframe');
+      iframe.src = `/api/canvases/content?path=${encodeURIComponent(relPath)}`;
+
+      iframe.onload = () => {
+        attachIframeInteractions(iframe);
+        fetchComments(relPath);
+      };
+    }
+
+    // ===== 코멘트 앵커 =====
+    // 캔버스 원본에 코멘트용 속성을 심으면 캔버스 관리자와 git 충돌이 나므로, 원본은 읽기만 하고
+    // 앵커를 렌더 시점에 계산한다. 저장 시 3종을 함께 남기고, 찾을 때 id → path → hash 순으로 폴백한다.
+    //
+    // 지목 대상에서 div를 제외한 이유: 접기/펼치기 스크립트가 <h2> 이후 형제들을 div.sec-body로 옮기므로,
+    // div를 허용하면 섹션 전체 래퍼가 잡힌다. 그 래퍼는 원본 파일에 없는 런타임 생성 요소여서 앵커가 될 수 없다.
+    const ANCHORABLE_SELECTOR = '[data-block], h1, h2, h3, h4, table, section, article, .screen-block, .screen-note, .screen-desc, pre.mermaid, li, tr';
+
+    function findAnchorableBlock(target) {
+      let block = target.closest(ANCHORABLE_SELECTOR);
+      // 런타임에 생성된 접이 래퍼는 앵커 대상이 아니다.
+      while (block && block.classList && block.classList.contains('sec-body')) {
+        block = block.parentElement ? block.parentElement.closest(ANCHORABLE_SELECTOR) : null;
+      }
+      return block;
+    }
+
+    function normalizeAnchorText(el) {
+      return (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 120);
+    }
+
+    // FNV-1a. 텍스트 지문용이므로 충돌 내성보다 짧고 안정적인 것이 중요하다.
+    function anchorTextHash(str) {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+      }
+      return h.toString(16);
+    }
+
+    // 태그별 문서 순서 인덱스. 부모 체인을 쓰지 않으므로 접이 래퍼 삽입에 영향받지 않는다.
+    function anchorPathOf(doc, el) {
+      const tag = el.tagName.toLowerCase();
+      const sameTag = Array.from(doc.querySelectorAll(tag));
+      const idx = sameTag.indexOf(el);
+      return idx === -1 ? null : `${tag}#${idx}`;
+    }
+
+    function computeAnchor(doc, el) {
+      const text = normalizeAnchorText(el);
+      return {
+        anchorId: el.id ? `id:${el.id}` : null,
+        anchorPath: anchorPathOf(doc, el),
+        anchorHash: text ? anchorTextHash(text) : null
+      };
+    }
+
+    // 접힌 섹션 안의 블록은 hidden 상태라 스크롤 대상이 못 된다. 조상 접이 영역을 펼친다.
+    function revealAnchorTarget(doc, el) {
+      let secBody = el.closest('.sec-body');
+      while (secBody) {
+        if (secBody.hidden) {
+          const head = secBody.previousElementSibling;
+          if (head && head.classList.contains('sec-head')) head.click();
+          else secBody.hidden = false;
+        }
+        secBody = secBody.parentElement ? secBody.parentElement.closest('.sec-body') : null;
+      }
+    }
+
+    /**
+     * id → hash → path 순으로 폴백한다. 전부 실패하면 null.
+     * @returns {{el: Element, via: 'id'|'hash'|'path'}|null}
+     *
+     * hash가 path보다 먼저인 이유: 블록이 문서에서 밀리면(앞에 같은 태그가 삽입되면) path는 "존재하지만
+     * 엉뚱한 요소"를 반환한다. 텍스트가 그대로라면 hash가 정확하므로 hash를 먼저 본다.
+     * 반대로 텍스트만 수정된 경우엔 hash가 실패하고 path가 정답이 된다.
+     * 둘 다 바뀌면 path는 추정일 뿐이므로 via로 구분해 호출부가 다르게 표시할 수 있게 한다.
+     */
+    function resolveAnchor(doc, comment) {
+      if (comment.anchorId) {
+        const rawId = comment.anchorId.replace(/^id:/, '');
+        const byId = doc.getElementById(rawId);
+        if (byId) return { el: byId, via: 'id' };
+      }
+
+      if (comment.anchorHash) {
+        const candidates = Array.from(doc.querySelectorAll(ANCHORABLE_SELECTOR))
+          .filter(el => !(el.classList && el.classList.contains('sec-body')));
+        const matched = candidates.filter(el => anchorTextHash(normalizeAnchorText(el)) === comment.anchorHash);
+        // 같은 문구가 여러 곳에 있으면 어느 쪽인지 결정할 수 없다 → 다음 폴백으로 넘긴다.
+        if (matched.length === 1) return { el: matched[0], via: 'hash' };
+      }
+
+      if (comment.anchorPath) {
+        const m = /^([a-z0-9]+)#(\d+)$/i.exec(comment.anchorPath);
+        if (m) {
+          const found = doc.querySelectorAll(m[1])[Number(m[2])];
+          if (found && !(found.classList && found.classList.contains('sec-body'))) {
+            return { el: found, via: 'path' };
+          }
+        }
+      }
+
+      return null;
+    }
+
+    // ===== iframe 내부 블록 선택 및 코멘트 달기 버튼/입력창 주입 =====
+    function attachIframeInteractions(iframe) {
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow.document;
+        if (!doc || !doc.body) return;
+
+        // 캔버스를 바꾸면 이전 문서를 보던 관찰자는 더 볼 것이 없다. 새 문서 기준으로 다시 붙인다.
+        if (markerLayoutObserver) markerLayoutObserver.disconnect();
+
+        let selectedBlock = null;
+        let selectedAnchor = null;
+        let activeBtn = null;
+        let activeComposer = null;
+
+        function clearAll() {
+          if (selectedBlock) {
+            selectedBlock.style.outline = '';
+            selectedBlock.style.backgroundColor = '';
+            selectedBlock = null;
+          }
+          if (activeBtn) { activeBtn.remove(); activeBtn = null; }
+          if (activeComposer) { activeComposer.remove(); activeComposer = null; }
+        }
+
+        // 모드가 꺼질 때 바깥에서 선택 상태를 걷어낼 수 있게 핸들을 넘겨둔다.
+        clearCanvasSelection = clearAll;
+
+        // 클릭 시 블록 감지 및 우측 끝 '💬 코멘트 달기' 플로팅 버튼 생성
+        doc.body.addEventListener('click', (e) => {
+          // 읽기 모드에서는 본문을 지목하지 않는다. 상단 '코멘트'를 열어 코멘트 모드로 들어가야 한다.
+          if (!commentModeOn) return;
+          if (e.target.closest('.oc-btn-floating') || e.target.closest('.oc-composer-floating')
+              || e.target.closest('.oc-comment-marker')) {
+            return;
+          }
+
+          let block = findAnchorableBlock(e.target);
+          if (!block || block === doc.body || block === doc.documentElement) return;
+
+          // blockName은 패널에 보여줄 라벨이다. 블록을 다시 찾는 일은 앵커가 맡는다.
+          let name = block.dataset.block || block.innerText.trim().split('\n')[0].substring(0, 30);
+          if (!name) name = '지목 영역';
+          block.dataset.blockName = name;
+          selectedAnchor = computeAnchor(doc, block);
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          clearAll();
+
+          selectedBlock = block;
+          selectedBlock.style.outline = '3px solid #2e90fa';
+          selectedBlock.style.backgroundColor = 'rgba(46, 144, 250, 0.1)';
+
+          // 블록 우측 끝 위치 계산
+          const rect = block.getBoundingClientRect();
+          const win = iframe.contentWindow;
+          const pageTop = Math.max(10, win.scrollY + rect.bottom - 10);
+          const pageLeft = Math.max(10, Math.min(win.scrollX + rect.right - 130, doc.documentElement.clientWidth - 140));
+
+          activeBtn = doc.createElement('button');
+          activeBtn.type = 'button';
+          activeBtn.className = 'oc-btn-floating';
+          activeBtn.style.cssText = `
+            position: absolute !important;
+            top: ${pageTop}px !important;
+            left: ${pageLeft}px !important;
+            z-index: 9999999 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            padding: 6px 12px !important;
+            background: #101828 !important;
+            color: #ffffff !important;
+            border-radius: 18px !important;
+            font-size: 12px !important;
+            font-weight: bold !important;
+            border: 2px solid #2e90fa !important;
+            cursor: pointer !important;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.3) !important;
+            font-family: -apple-system, sans-serif !important;
+            white-space: nowrap !important;
+          `;
+          activeBtn.innerHTML = '💬 코멘트 달기';
+
+          doc.body.appendChild(activeBtn);
+
+          activeBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            // 서버가 401로 막으므로, 다 써 놓고 거부당하기 전에 여기서 로그인부터 요구한다.
+            if (!requireLoginOrPrompt('코멘트를 달려면 로그인해주세요.')) return;
+            if (activeBtn) { activeBtn.remove(); activeBtn = null; }
+            showComposer(block, pageTop + 30, Math.max(10, Math.min(win.scrollX + rect.right - 330, doc.documentElement.clientWidth - 340)));
+          });
+
+          // 지목한 블록에 이미 코멘트가 있으면 그 카드를 강조한다. 앵커로 맞춰야 같은 문구를 가진
+          // 다른 블록의 카드가 잘못 잡히지 않는다.
+          const matchingCard = Array.from(document.querySelectorAll('.comment-card')).find(el => {
+            const cached = commentsCache.find(x => String(x.id) === String(el.dataset.commentId));
+            if (!cached) return false;
+            if (cached.anchorId || cached.anchorPath || cached.anchorHash) {
+              const r = resolveAnchor(doc, cached);
+              return !!r && r.el === block;
+            }
+            return el.dataset.blockName === name;
+          });
+          if (matchingCard) {
+            highlightCommentCard(matchingCard);
+          }
+        });
+
+        // 호버 가이드 — 지목 대상과 같은 기준을 써야 "호버된 것"과 "클릭되는 것"이 일치한다.
+        // 읽기 모드에서는 지목이 안 되므로 가이드도 띄우지 않는다.
+        doc.body.addEventListener('mouseover', (e) => {
+          if (!commentModeOn) return;
+          let block = findAnchorableBlock(e.target);
+          if (block && block !== selectedBlock) {
+            block.style.outline = '2px dashed #2e90fa';
+          }
+        });
+        doc.body.addEventListener('mouseout', (e) => {
+          // 모드가 방금 꺼졌더라도 남은 점선은 지워야 한다 — 여기서는 조건 없이 정리한다.
+          let block = findAnchorableBlock(e.target);
+          if (block && block !== selectedBlock) {
+            block.style.outline = '';
+          }
+        });
+
+        function showComposer(block, top, left) {
+          if (activeComposer) activeComposer.remove();
+
+          activeComposer = doc.createElement('div');
+          activeComposer.className = 'oc-composer-floating';
+          activeComposer.style.cssText = `
+            position: absolute !important;
+            top: ${top}px !important;
+            left: ${left}px !important;
+            width: 320px !important;
+            z-index: 9999999 !important;
+            padding: 14px !important;
+            background: #ffffff !important;
+            border: 2px solid #2e90fa !important;
+            border-radius: 10px !important;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.25) !important;
+            font-family: -apple-system, sans-serif !important;
+            text-align: left !important;
+            box-sizing: border-box !important;
+          `;
+
+          activeComposer.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; border-bottom:1px solid #f2f4f7; padding-bottom:6px;">
+              <span style="font-size:12px; font-weight:bold; color:#101828; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:200px;">📍 지목: ${block.dataset.blockName}</span>
+              <span style="font-size:11px; color:#667085;" title="${escapeHtml(currentUser?.email || '')}">${escapeHtml(currentUser?.nickname || currentUser?.email || '')}</span>
+            </div>
+            <textarea id="ocTextarea" rows="3" maxlength="1000" placeholder="이 블록에 대한 의견을 남겨주세요."
+                      style="width:100%; border:1px solid #d0d5dd; border-radius:6px; padding:8px; font-size:13px; outline:none; resize:vertical; box-sizing:border-box;"></textarea>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-top:8px;">
+              <span style="font-size:11px; color:#667085;"><span id="ocCounter">0</span>/1000</span>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span id="ocError" style="font-size:12px; color:#d92d20; display:none;">내용을 입력해주세요</span>
+                <button type="button" id="ocCancel" style="padding:4px 10px; border:1px solid #d0d5dd; background:#fff; border-radius:6px; font-size:12px; cursor:pointer;">취소</button>
+                <button type="button" id="ocSubmit" style="padding:4px 12px; border:none; background:#101828; color:#fff; border-radius:6px; font-size:12px; font-weight:bold; cursor:pointer;">등록</button>
+              </div>
+            </div>
+          `;
+
+          doc.body.appendChild(activeComposer);
+
+          const ta = activeComposer.querySelector('#ocTextarea');
+          const counter = activeComposer.querySelector('#ocCounter');
+          const err = activeComposer.querySelector('#ocError');
+
+          ta.focus();
+          ta.addEventListener('input', () => {
+            counter.textContent = String(ta.value.length);
+            if (ta.value.trim()) err.style.display = 'none';
+          });
+
+          activeComposer.querySelector('#ocCancel').addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            clearAll();
+          });
+
+          // 답글과 같은 이유로 재진입을 막는다 — 응답을 기다리는 동안 한 번 더 누르면 두 행이 쌓인다.
+          let composerSubmitting = false;
+
+          const submitBtn = activeComposer.querySelector('#ocSubmit');
+          submitBtn.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            if (composerSubmitting) return;
+
+            const body = ta.value.trim();
+            if (!body) {
+              err.style.display = 'inline';
+              ta.focus();
+              return;
+            }
+
+            composerSubmitting = true;
+            submitBtn.disabled = true;
+            const relPath = `${currentFolder}/${currentFile}`;
+            try {
+              const res = await fetch('/api/comments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  canvasPath: relPath,
+                  blockName: block.dataset.blockName,
+                  body: body,
+                  // 원본을 수정하지 않고 이 블록을 다시 찾기 위한 앵커 3종
+                  anchorId: selectedAnchor && selectedAnchor.anchorId,
+                  anchorPath: selectedAnchor && selectedAnchor.anchorPath,
+                  anchorHash: selectedAnchor && selectedAnchor.anchorHash
+                })
+              });
+              const data = await res.json();
+              if (res.ok && data.success) {
+                clearAll();
+                await fetchComments(relPath);
+                setCommentPanelOpen(true);
+              } else if (res.status === 401) {
+                // 세션이 만료된 채로 작성한 경우다. 입력 내용은 남겨두고 로그인만 요구한다.
+                await fetchCurrentUser();
+                requireLoginOrPrompt(data.message || '로그인이 필요합니다.');
+              } else {
+                alert(data.message || '코멘트 등록 실패');
+              }
+            } catch (err) {
+              alert('서버 통신 실패');
+            } finally {
+              // 성공하면 clearAll()이 입력창째로 지우므로, 이 복구는 실패해서 다시 쓰는 경우를 위한 것이다.
+              composerSubmitting = false;
+              submitBtn.disabled = false;
+            }
+          });
+        }
+      } catch (err) {
+        console.error('iframe 인터랙션 바인딩 오류', err);
+      }
+    }
+
+    // ===== 코멘트 목록 조회 =====
+    async function fetchComments(canvasPath) {
+      try {
+        const res = await fetch(`/api/comments?canvasPath=${encodeURIComponent(canvasPath)}`);
+        if (res.status === 401) { await handleUnauthorized(); return; }
+        commentsCache = await res.json();
+        updateCommentsUI();
+        // 코멘트가 새로 달렸을 수 있으므로 다른 캔버스 뱃지까지 함께 맞춘다.
+        refreshUnresolvedCounts();
+      } catch (e) {
+        console.error('코멘트 조회 실패', e);
+      }
+    }
+
+    function updateCommentsUI() {
+      // 답글은 부모 아래에 렌더하므로, 개수는 최상위 코멘트만 센다.
+      const allTopLevel = commentsCache.filter(c => !c.parentId);
+      const repliesByParent = new Map();
+      commentsCache.filter(c => c.parentId).forEach(r => {
+        const key = String(r.parentId);
+        if (!repliesByParent.has(key)) repliesByParent.set(key, []);
+        repliesByParent.get(key).push(r);
+      });
+
+      // 해결됨을 숨기는 필터. 답글은 부모에 종속되므로 부모 기준으로만 걸러진다.
+      const unresolvedOnly = document.getElementById('unresolvedOnly').checked;
+      const topLevel = unresolvedOnly ? allTopLevel.filter(c => !c.resolved) : allTopLevel;
+      const hiddenCount = allTopLevel.length - topLevel.length;
+
+      // 캔버스 위 아이콘은 패널에 보이는 목록과 같은 기준으로 그린다 — 필터를 켜서 숨긴 코멘트가
+      // 캔버스에는 남아 있으면 어느 쪽이 맞는지 알 수 없다. 답글은 부모 앵커를 물려받으므로
+      // 별도 아이콘 없이 부모 뱃지 숫자에 합산한다.
+      markerComments = topLevel.map(c => ({
+        comment: c,
+        replyCount: (repliesByParent.get(String(c.id)) || []).length
+      }));
+
+      // 뱃지는 필터와 무관하게 전체 코멘트 수를 유지한다 — 필터를 켠 채 잊고 있어도
+      // 코멘트가 몇 개인지는 알 수 있어야 한다.
+      document.getElementById('navCommentBadge').textContent = allTopLevel.length;
+      document.getElementById('panelCommentCount').textContent = unresolvedOnly
+        ? `${topLevel.length}개 / 전체 ${allTopLevel.length}개`
+        : `${allTopLevel.length}개`;
+      document.getElementById('resolvedHiddenCount').textContent = hiddenCount > 0 ? `해결됨 ${hiddenCount}개 숨김` : '';
+
+      const list = document.getElementById('commentList');
+      const empty = document.getElementById('commentEmpty');
+      list.innerHTML = '';
+
+      if (topLevel.length === 0) {
+        empty.textContent = allTopLevel.length === 0
+          ? '아직 코멘트가 없습니다'
+          : '미해결 코멘트가 없습니다';
+        empty.classList.remove('hidden');
+      } else {
+        empty.classList.add('hidden');
+        topLevel.forEach(c => {
+          const replies = repliesByParent.get(String(c.id)) || [];
+
+          // li는 [카드 + 답글 영역]을 감싸는 컨테이너이고, 앵커 이동 대상은 안쪽 .comment-card다.
+          const li = document.createElement('li');
+          const isResolved = !!c.resolved;
+
+          const card = document.createElement('div');
+          card.className = `comment-card p-3 rounded-lg border shadow-sm cursor-pointer transition ${
+            isResolved
+              ? 'bg-gray-50 border-gray-200 opacity-60'
+              : 'bg-white border-gray-200 hover:border-blue-400'
+          }`;
+          card.dataset.commentId = c.id;
+          card.dataset.blockName = c.blockName;
+
+          // 작성자는 닉네임으로 보여준다. 미등록/삭제 계정이면 닉네임이 없으므로 이메일로 폴백한다.
+          const authorName = authorDisplayName(c);
+          const initial = authorName.charAt(0).toUpperCase();
+          card.innerHTML = `
+            <div class="flex items-start gap-2">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between mb-1.5">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="w-5 h-5 rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center flex-none">${escapeHtml(initial)}</span>
+                    <span class="text-xs font-semibold text-gray-800 truncate max-w-[120px]" title="${escapeHtml(c.authorId)}">${escapeHtml(authorName)}</span>
+                  </div>
+                  <span class="comment-time text-[10px] text-gray-400 flex-none"
+                        data-created-at="${escapeHtml(c.createdAt || '')}"
+                        title="${escapeHtml(formatAbsoluteTime(c.createdAt))}">${formatRelativeTime(c.createdAt)}</span>
+                </div>
+                <div class="text-[11px] font-semibold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5 mb-1.5 inline-block truncate max-w-full">
+                  📍 ${c.blockName}
+                </div>
+                <div class="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap ${isResolved ? 'line-through text-gray-400' : ''}">${escapeHtml(c.body)}</div>
+                <!-- 답글(좌측 하단) / 삭제(우측 하단) -->
+                <div class="mt-2 flex items-center justify-between gap-2">
+                  <button type="button"
+                    class="reply-btn text-[11px] text-gray-500 hover:text-blue-600 font-semibold cursor-pointer">
+                    답글${replies.length > 0 ? ` ${replies.length}` : ''}
+                  </button>
+                  ${isMine(c) ? `<button type="button"
+                    class="delete-btn text-[11px] text-gray-400 hover:text-red-600 font-semibold cursor-pointer flex-none">
+                    삭제
+                  </button>` : ''}
+                </div>
+              </div>
+              <!-- resolve 체크 버튼 -->
+              <button type="button"
+                class="resolve-btn flex-none mt-0.5 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer ${
+                  isResolved
+                    ? 'bg-emerald-500 border-emerald-500 text-white'
+                    : 'border-gray-300 text-transparent hover:border-emerald-400 hover:text-emerald-300'
+                }"
+                title="${isResolved ? '해결됨 (클릭하여 취소)' : '해결됨으로 표시'}"
+                data-comment-id="${c.id}"
+                data-resolved="${isResolved}">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          `;
+          li.appendChild(card);
+
+          // 카드 클릭 → 앵커 이동
+          card.addEventListener('click', (e) => {
+            if (e.target.closest('.resolve-btn') || e.target.closest('.reply-btn')
+                || e.target.closest('.delete-btn')) return;
+            highlightCommentCard(card);
+            const via = highlightIframeBlock(c);
+            // 캔버스가 수정되면 앵커가 깨질 수 있다. 코멘트는 남아 있으므로 카드에만 상태를 표시한다.
+            card.querySelector('.anchor-note')?.remove();
+            if (!via || via === 'path' || via === 'legacy') {
+              const note = document.createElement('div');
+              note.className = 'anchor-note mt-1.5 text-[10px] rounded px-1.5 py-0.5 border '
+                + (via ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-red-700 bg-red-50 border-red-200');
+              note.textContent = via
+                // path/legacy는 "존재하는 요소를 찾았다"는 뜻일 뿐 정확성이 보장되지 않는다.
+                ? '⚠ 캔버스가 수정되어 위치를 추정했습니다'
+                : '⚠ 캔버스에서 이 블록의 위치를 찾을 수 없습니다';
+              card.appendChild(note);
+            }
+          });
+
+          // 삭제 버튼은 본인 코멘트에만 렌더된다(권한은 서버가 다시 확인한다).
+          card.querySelector('.delete-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteComment(c.id, replies.length);
+          });
+
+          // resolve 버튼 클릭 → PATCH API
+          card.querySelector('.resolve-btn').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const btn = e.currentTarget;
+            // 해결 처리도 쓰기다 — 서버가 401로 막으므로 미리 로그인을 요구한다.
+            if (!requireLoginOrPrompt('해결 처리를 하려면 로그인해주세요.')) return;
+
+            const commentId = btn.dataset.commentId;
+            const currentResolved = btn.dataset.resolved === 'true';
+            const nextResolved = !currentResolved;
+
+            btn.disabled = true;
+            try {
+              const res = await fetch(`/api/comments/${commentId}/resolve`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ resolved: nextResolved })
+              });
+              if (res.ok) {
+                // 캐시 업데이트 후 리렌더
+                const idx = commentsCache.findIndex(x => String(x.id) === String(commentId));
+                if (idx !== -1) commentsCache[idx] = { ...commentsCache[idx], resolved: nextResolved };
+                updateCommentsUI();
+                // 해결 처리하면 이 캔버스의 미해결 수가 줄어든다 → 사이드바 뱃지도 맞춘다.
+                refreshUnresolvedCounts();
+              } else if (res.status === 401) {
+                // 확인과 요청 사이에 세션이 끊긴 경우다.
+                await fetchCurrentUser();
+                requireLoginOrPrompt('해결 처리를 하려면 로그인해주세요.');
+              }
+            } catch (err) {
+              console.error('resolve 저장 실패', err);
+            } finally {
+              btn.disabled = false;
+            }
+          });
+
+          // ===== 답글 목록 (부모보다 한 뎁스 들여쓰기) =====
+          if (replies.length > 0) {
+            const replyList = document.createElement('ul');
+            replyList.className = 'mt-2 ml-4 pl-3 border-l-2 border-gray-200 space-y-2';
+            replies.forEach(r => {
+              const rAuthorName = authorDisplayName(r);
+              const rInitial = rAuthorName.charAt(0).toUpperCase();
+              const rli = document.createElement('li');
+              rli.className = 'reply-item bg-white border border-gray-200 rounded-md p-2';
+              rli.dataset.commentId = r.id;
+              rli.innerHTML = `
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="w-4 h-4 rounded-full bg-gray-400 text-white text-[9px] font-bold flex items-center justify-center flex-none">${escapeHtml(rInitial)}</span>
+                    <span class="text-[11px] font-semibold text-gray-700 truncate max-w-[110px]" title="${escapeHtml(r.authorId)}">${escapeHtml(rAuthorName)}</span>
+                  </div>
+                  <span class="comment-time text-[10px] text-gray-400 flex-none"
+                        data-created-at="${escapeHtml(r.createdAt || '')}"
+                        title="${escapeHtml(formatAbsoluteTime(r.createdAt))}">${formatRelativeTime(r.createdAt)}</span>
+                </div>
+                <div class="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">${escapeHtml(r.body)}</div>
+                ${isMine(r) ? `<div class="mt-1 flex justify-end">
+                  <button type="button"
+                    class="delete-btn text-[11px] text-gray-400 hover:text-red-600 font-semibold cursor-pointer">
+                    삭제
+                  </button>
+                </div>` : ''}
+              `;
+
+              // 답글에는 자식이 없으므로 확인 문구에서 답글 경고를 뺀다.
+              rli.querySelector('.delete-btn')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteComment(r.id, 0);
+              });
+
+              replyList.appendChild(rli);
+            });
+            li.appendChild(replyList);
+          }
+
+          // ===== 답글 입력 폼 (답글 버튼으로 토글) =====
+          const replyForm = document.createElement('div');
+          replyForm.className = 'reply-form mt-2 ml-4 pl-3 border-l-2 border-gray-200 hidden';
+          replyForm.innerHTML = `
+            <div class="flex items-center gap-1.5">
+              <input type="text" maxlength="1000" placeholder="답글을 입력하세요"
+                class="reply-input flex-1 min-w-0 border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-blue-400" />
+              <button type="button" title="답글 등록"
+                class="reply-submit flex-none w-7 h-7 rounded bg-gray-900 text-white flex items-center justify-center hover:bg-gray-700 cursor-pointer">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M3 7h8M7.5 3.5L11 7l-3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          `;
+          li.appendChild(replyForm);
+
+          const replyInput = replyForm.querySelector('.reply-input');
+          const replySubmit = replyForm.querySelector('.reply-submit');
+
+          card.querySelector('.reply-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            replyForm.classList.toggle('hidden');
+            if (!replyForm.classList.contains('hidden')) replyInput.focus();
+          });
+
+          // 서버에는 중복 등록을 막을 근거가 없다(INSERT 한 문장). 같은 답글이 두 번 올라가면
+          // 두 행이 그대로 쌓이므로, 응답을 기다리는 동안 두 번째 제출을 여기서 막는다.
+          let replySubmitting = false;
+
+          async function submitReply() {
+            if (replySubmitting) return;
+
+            const body = replyInput.value.trim();
+            if (!body) {
+              replyInput.focus();
+              return;
+            }
+            if (!requireLoginOrPrompt('답글을 달려면 로그인해주세요.')) return;
+
+            replySubmitting = true;
+            replySubmit.disabled = true;
+            try {
+              const res = await fetch('/api/comments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // canvasPath/blockName은 서버가 부모 값으로 덮어쓴다.
+                body: JSON.stringify({
+                  canvasPath: c.canvasPath,
+                  blockName: c.blockName,
+                  body: body,
+                  parentId: c.id
+                })
+              });
+              const data = await res.json();
+              if (res.ok && data.success) {
+                // 재렌더 전에 비운다 — 남아 있으면 응답 대기 중 들어온 Enter가 같은 값을 다시 보낸다.
+                replyInput.value = '';
+                await fetchComments(c.canvasPath);
+              } else if (res.status === 401) {
+                await fetchCurrentUser();
+                requireLoginOrPrompt(data.message || '로그인이 필요합니다.');
+              } else {
+                alert(data.message || '답글 등록 실패');
+              }
+            } catch (err) {
+              alert('서버 통신 실패');
+            } finally {
+              replySubmitting = false;
+              replySubmit.disabled = false;
+            }
+          }
+
+          replySubmit.addEventListener('click', (e) => {
+            e.stopPropagation();
+            submitReply();
+          });
+          replyInput.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            // 한글 입력 중의 Enter는 조합을 확정하는 키다. 브라우저가 확정 전후로 keydown을
+            // 두 번 올려보내므로, 조합 중인 Enter를 걸러내지 않으면 같은 답글이 두 번 등록된다.
+            if (e.isComposing || e.keyCode === 229) return;
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              submitReply();
+            }
+          });
+
+          list.appendChild(li);
+        });
+      }
+
+      // 목록이 바뀌면 캔버스 위 아이콘도 함께 맞춘다(모드가 꺼져 있으면 그리지 않는다).
+      renderCommentMarkers();
+    }
+
+
+    function highlightCommentCard(cardEl) {
+      document.querySelectorAll('.comment-card').forEach(el => el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-50'));
+      cardEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-50');
+      cardEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function toggleCommentPanel() {
+      const panel = document.getElementById('commentPanel');
+      setCommentPanelOpen(panel.style.display === 'none' || panel.style.display === '');
+    }
+
+    /**
+     * 패널 열림 = 코멘트 모드다. 이 함수가 모드 전환의 단일 창구이므로
+     * (상단 '코멘트' 버튼, 패널 '닫기', 코멘트 등록 직후가 모두 여기로 들어온다)
+     * 캔버스 아이콘 표시와 본문 지목 허용도 여기서 함께 뒤집는다.
+     */
+    function setCommentPanelOpen(open) {
+      const panel = document.getElementById('commentPanel');
+      const btn = document.getElementById('openCommentBtn');
+      panel.style.display = open ? 'flex' : 'none';
+      btn.setAttribute('aria-expanded', String(open));
+
+      commentModeOn = open;
+
+      // 모드가 켜졌음을 버튼에서도 알 수 있어야 한다 — 캔버스 클릭이 먹는지 여부가 여기에 달려 있다.
+      btn.className = 'inline-flex items-center justify-center gap-1.5 h-[30px] px-2.5 rounded-lg text-[13px] font-medium active:scale-[.99] cursor-pointer border '
+        + (open
+          ? 'bg-amber-400 border-amber-300 text-gray-900 hover:bg-amber-300'
+          : 'bg-white border-gray-300 text-gray-800 hover:bg-gray-100');
+      document.getElementById('canvasModeHint').textContent = open
+        ? '코멘트 모드 — 요소를 클릭하고 블록 끝의 💬 코멘트 달기 버튼 클릭'
+        : "읽기 모드 — 코멘트를 달려면 우측 상단 '코멘트'를 열어주세요";
+
+      if (open) {
+        renderCommentMarkers();
+        // 사이드바 미해결 뱃지도 코멘트 모드에서만 나온다.
+        refreshUnresolvedCounts();
+      } else {
+        // 읽기 모드로 나갈 때 지목 하이라이트와 입력창까지 걷어낸다. 남겨두면 클릭이 막힌
+        // 상태에서 취소도 못 하는 UI가 된다.
+        if (clearCanvasSelection) clearCanvasSelection();
+        stopMarkerLayoutWatch();
+        clearCommentMarkers();
+        // commentModeOn이 이미 false이므로 뱃지가 전부 지워진다.
+        updateSidebarCommentBadges();
+      }
+    }
+
+    // ===== 캔버스 위 코멘트 아이콘 =====
+    // 아이콘은 캔버스 원본을 건드리지 않기 위해 iframe body에 절대 위치로 덧씌운다.
+    // 블록 안에 끼워 넣으면 innerText가 바뀌어 anchorHash가 깨지고, tr/table에는 애초에 넣을 수도 없다.
+
+    function getCanvasDoc() {
+      const iframe = document.getElementById('canvasIframe');
+      try {
+        return (iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document))) || null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function clearCommentMarkers() {
+      const doc = getCanvasDoc();
+      if (!doc) return;
+      doc.querySelectorAll('.oc-comment-marker').forEach(el => el.remove());
+    }
+
+    function scheduleMarkerRelayout() {
+      if (!commentModeOn) return;
+      // 접기/펼치기 한 번에 변경 알림이 여러 개 몰려 오므로 마지막 한 번만 다시 그린다.
+      clearTimeout(markerRelayoutTimer);
+      markerRelayoutTimer = setTimeout(renderCommentMarkers, 100);
+    }
+
+    function stopMarkerLayoutWatch() {
+      if (markerLayoutObserver) markerLayoutObserver.disconnect();
+      clearTimeout(markerRelayoutTimer);
+    }
+
+    /**
+     * 섹션 접기/펼치기나 캔버스 자체 스크립트로 레이아웃이 바뀌면 아이콘 위치도 틀어진다.
+     * style은 감시 대상에서 뺀다 — 호버 가이드가 매 호버마다 outline을 쓰기 때문에
+     * style을 보면 마우스를 움직이는 동안 재배치가 끝없이 돈다.
+     */
+    function watchMarkerLayout(doc) {
+      if (!markerLayoutObserver) {
+        markerLayoutObserver = new MutationObserver(scheduleMarkerRelayout);
+      }
+      markerLayoutObserver.observe(doc.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['hidden', 'class']
+      });
+    }
+
+    function renderCommentMarkers() {
+      const iframe = document.getElementById('canvasIframe');
+      const doc = getCanvasDoc();
+      if (!doc || !doc.body || !iframe.contentWindow) return;
+
+      // 아이콘을 넣는 것 자체가 DOM 변경이라 관찰자가 다시 자신을 깨운다 → 그리는 동안 끊어둔다.
+      stopMarkerLayoutWatch();
+      try {
+        doc.querySelectorAll('.oc-comment-marker').forEach(el => el.remove());
+        if (!commentModeOn) return;
+
+        const win = iframe.contentWindow;
+
+        // 같은 블록에 달린 코멘트는 아이콘 하나로 묶는다. blockName은 서로 다른 블록에서 겹칠 수
+        // 있으므로 앵커가 실제로 가리킨 요소를 키로 쓴다.
+        const byElement = new Map();
+        markerComments.forEach(item => {
+          const found = findCommentTarget(doc, item.comment);
+          if (!found) return;
+          if (!byElement.has(found.el)) byElement.set(found.el, []);
+          byElement.get(found.el).push(item);
+        });
+
+        byElement.forEach((items, el) => {
+          const rect = el.getBoundingClientRect();
+          // 접힌 섹션 안의 블록은 박스가 0이라 붙일 자리가 없다. 펼쳐지면 관찰자가 다시 그린다.
+          if (rect.width === 0 && rect.height === 0) return;
+
+          // 답글까지 합친 수 — 아이콘만 보고 대화 분량을 짐작할 수 있어야 한다.
+          const total = items.reduce((sum, it) => sum + 1 + it.replyCount, 0);
+          const allResolved = items.every(it => it.comment.resolved);
+
+          const marker = doc.createElement('div');
+          marker.className = 'oc-comment-marker';
+          marker.dataset.commentId = items[0].comment.id;
+          marker.title = `${items[0].comment.blockName} — 코멘트 ${total}개${allResolved ? ' (해결됨)' : ''}`;
+
+          const top = Math.max(0, win.scrollY + rect.top - 9);
+          const left = Math.max(0, Math.min(win.scrollX + rect.right - 14, doc.documentElement.clientWidth - 44));
+
+          marker.style.cssText = `
+            position: absolute !important;
+            top: ${top}px !important;
+            left: ${left}px !important;
+            z-index: 9999998 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 3px !important;
+            height: 20px !important;
+            padding: 0 7px !important;
+            background: ${allResolved ? '#f2f4f7' : '#fffcf5'} !important;
+            border: 1.5px solid ${allResolved ? '#d0d5dd' : '#fdb022'} !important;
+            border-radius: 10px !important;
+            color: ${allResolved ? '#98a2b3' : '#b54708'} !important;
+            font-family: -apple-system, sans-serif !important;
+            font-size: 11px !important;
+            font-weight: bold !important;
+            line-height: 1 !important;
+            white-space: nowrap !important;
+            cursor: pointer !important;
+            user-select: none !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.18) !important;
+          `;
+          marker.innerHTML = `<span style="font-size:11px !important;">💬</span><span>${total}</span>`;
+
+          // 아이콘 → 카드. 카드 클릭이 캔버스로 이동하는 것의 역방향이다.
+          marker.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const card = document.querySelector(`.comment-card[data-comment-id="${marker.dataset.commentId}"]`);
+            if (card) highlightCommentCard(card);
+          });
+
+          doc.body.appendChild(marker);
+        });
+      } finally {
+        if (commentModeOn) watchMarkerLayout(doc);
+      }
+    }
+
+    /**
+     * 코멘트가 붙은 블록을 찾는다. 앵커(id → hash → path)로 찾고,
+     * 앵커가 없는 구버전 코멘트는 blockName 텍스트로 폴백한다.
+     * 카드 클릭 이동과 캔버스 아이콘이 같은 결과를 봐야 하므로 두 곳이 이 함수를 공유한다.
+     * @returns {{el: Element, via: 'id'|'hash'|'path'|'legacy'}|null}
+     */
+    function findCommentTarget(doc, comment) {
+      const resolved = resolveAnchor(doc, comment);
+      if (resolved) return resolved;
+
+      // 앵커가 없는 구버전 코멘트 폴백: 원본 태깅 값 → 클릭 시점에 붙은 라벨 → 텍스트 첫 줄
+      if (comment.blockName) {
+        const name = comment.blockName;
+        const el = Array.from(doc.querySelectorAll('[data-block]'))
+          .find(el => el.getAttribute('data-block') === name)
+          || Array.from(doc.querySelectorAll('[data-block-name]'))
+            .find(el => el.dataset.blockName === name)
+          || Array.from(doc.querySelectorAll(ANCHORABLE_SELECTOR))
+            .filter(el => !(el.classList && el.classList.contains('sec-body')))
+            .find(el => (el.innerText || '').trim().split('\n')[0].substring(0, 30) === name)
+          || null;
+        if (el) return { el, via: 'legacy' };
+      }
+
+      return null;
+    }
+
+    /**
+     * 코멘트가 가리키는 블록으로 이동한다.
+     * @returns {'id'|'hash'|'path'|'legacy'|null} 블록을 찾은 경로. null이면 못 찾음.
+     */
+    function highlightIframeBlock(comment) {
+      const doc = getCanvasDoc();
+      if (!doc) return null;
+
+      const found = findCommentTarget(doc, comment);
+      if (!found) return null;
+
+      const target = found.el;
+      const via = found.via;
+
+      revealAnchorTarget(doc, target);
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.style.outline = '3px solid #2e90fa';
+      target.style.backgroundColor = 'rgba(46, 144, 250, 0.12)';
+      setTimeout(() => {
+        target.style.outline = '';
+        target.style.backgroundColor = '';
+      }, 2500);
+      return via;
+    }
+
+    function escapeHtml(str) {
+      return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /**
+     * 내가 쓴 코멘트인지. 삭제 버튼을 보여줄지 정하는 기준이다.
+     * 화면 판단은 버튼 노출용이고, 실제 권한은 서버가 세션으로 다시 확인한다.
+     */
+    function isMine(comment) {
+      return isLoggedIn() && !!comment && comment.authorId === currentUser.email;
+    }
+
+    /**
+     * 코멘트를 삭제한다. 답글은 코멘트를 FK로 참조해 함께 지워지므로 그 사실을 먼저 알린다.
+     * @param replyCount 이 코멘트에 달린 답글 수. 0이면 답글 경고를 뺀다.
+     */
+    async function deleteComment(commentId, replyCount) {
+      if (!requireLoginOrPrompt('삭제하려면 로그인해주세요.')) return;
+
+      const message = replyCount > 0
+        ? `이 코멘트와 달린 답글 ${replyCount}개가 함께 삭제됩니다. 삭제할까요?`
+        : '이 코멘트를 삭제할까요?';
+      if (!confirm(message)) return;
+
+      try {
+        const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && data.success) {
+          // 목록·캔버스 아이콘·사이드바 뱃지를 한 번에 맞춘다.
+          await fetchComments(`${currentFolder}/${currentFile}`);
+        } else if (res.status === 401) {
+          await fetchCurrentUser();
+          requireLoginOrPrompt(data.message || '로그인이 필요합니다.');
+        } else {
+          // 403(남의 코멘트)·400(이미 삭제됨)은 로그인 창을 띄워도 해결되지 않는다.
+          alert(data.message || '코멘트 삭제 실패');
+          // 이미 지워진 코멘트가 화면에 남아 있을 수 있으므로 목록을 다시 읽는다.
+          await fetchComments(`${currentFolder}/${currentFile}`);
+        }
+      } catch (e) {
+        alert('서버 통신 실패');
+      }
+    }
+
+    /**
+     * 코멘트에 표시할 작성자 이름. 서버가 member에서 채워준 닉네임을 쓰고,
+     * 미등록/삭제 계정이면 닉네임이 비어 오므로 이메일로 폴백한다(이름 칸이 비는 것보다 낫다).
+     */
+    function authorDisplayName(comment) {
+      const nickname = comment && comment.authorNickname;
+      if (nickname && String(nickname).trim()) return String(nickname).trim();
+      return (comment && comment.authorId) || '알 수 없음';
+    }
+
+    // ===== 작성 시각 표시 =====
+
+    function pad2(n) {
+      return String(n).padStart(2, '0');
+    }
+
+    /**
+     * created_at은 DB 서버(+09:00) 기준 "YYYY-MM-DD HH:MM:SS" 문자열이다(application.yml 참고).
+     * 공백으로 구분된 형태는 브라우저마다 해석이 달라(Safari는 Invalid Date) ISO + KST 오프셋으로 바꿔 넘긴다.
+     * @returns {Date|null} 형식이 예상과 다르면 null.
+     */
+    function parseServerDate(raw) {
+      if (!raw) return null;
+      const iso = String(raw).trim().replace(' ', 'T');
+      const hasZone = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso);
+      const d = new Date(hasZone ? iso : `${iso}+09:00`);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    /** '3분 전'처럼 지금과의 간격으로 보여준다. 1주일이 넘으면 간격보다 날짜가 유용하므로 날짜로 바꾼다. */
+    function formatRelativeTime(raw) {
+      const d = parseServerDate(raw);
+      // 형식이 바뀌어도 'NaN분 전'이 뜨지는 않게 원본을 그대로 보여준다.
+      if (!d) return raw ? String(raw).substring(0, 16) : '';
+
+      const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+      // 서버와 브라우저 시계 차이로 음수가 나올 수 있다 — '방금 전'으로 흡수한다.
+      if (diffSec < 60) return '방금 전';
+
+      const min = Math.floor(diffSec / 60);
+      if (min < 60) return `${min}분 전`;
+      const hour = Math.floor(min / 60);
+      if (hour < 24) return `${hour}시간 전`;
+      const day = Math.floor(hour / 24);
+      if (day < 7) return `${day}일 전`;
+      return `${d.getFullYear()}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())}`;
+    }
+
+    /** 상대 시각만으로는 정확한 시점을 알 수 없으므로 title(툴팁)에 절대 시각을 남긴다. */
+    function formatAbsoluteTime(raw) {
+      const d = parseServerDate(raw);
+      if (!d) return raw ? String(raw) : '';
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    }
+
+    /** 카드를 다시 그리지 않고 시각 텍스트만 갱신한다. 작성 중인 답글 입력창을 지키기 위한 것이다. */
+    function refreshCommentTimes() {
+      document.querySelectorAll('.comment-time').forEach(el => {
+        el.textContent = formatRelativeTime(el.dataset.createdAt);
+      });
+    }
+  </script>
+</body>
+</html>

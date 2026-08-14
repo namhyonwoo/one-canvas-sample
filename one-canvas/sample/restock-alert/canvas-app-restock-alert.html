@@ -1,0 +1,1491 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>통합 캔버스 — 품절 상품 재입고 알림 (App)</title>
+<meta name="canvas-updated-at" content="2026-07-31T16:54:47+09:00">
+<style>
+  /* ============================================================
+     색·타이포 토큰: design-system/app `src/tokens/primitives.ts`
+     · `src/tokens/typography.ts` 실값을 CSS 변수로 옮긴 것.
+     하드코딩 금지 — 화면 스타일은 아래 변수만 사용한다.
+     ============================================================ */
+  :root {
+    /* gray_neutral */
+    --g25:  #fcfcfd; --g50:  #f9fafb; --g100: #f3f4f6; --g150: #eaecf0;
+    --g200: #e5e7eb; --g300: #d2d6db; --g400: #9da4ae; --g500: #6c737f;
+    --g600: #4d5761; --g700: #384250; --g800: #1f2a37; --g900: #111927; --g950: #0d121c;
+    /* blue */
+    --blue50: #eff8ff; --blue100: #d1e9ff; --blue400: #53b1fd; --blue500: #2e90fa; --blue600: #1570ef;
+    /* red */
+    --red50: #fef3f2; --red100: #fee4e2; --red500: #f04438;
+    /* orange (NoticeBox CTA · 미보유 표기 겸용) */
+    --or50: #fffaeb; --or100: #fef0c7; --or200: #fedf89; --or300: #fec84b;
+    --or400: #fdb022; --or500: #f79009; --or600: #dc6803; --or700: #b54708;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    max-width: 940px; margin: 40px auto; padding: 0 24px 96px;
+    line-height: 1.6; color: #1c1f24;
+  }
+  h1 { font-size: 22px; border-bottom: 2px solid #1c1f24; padding-bottom: 12px; }
+  h2 {
+    font-size: 17px; margin-top: 48px; padding: 8px 12px;
+    background: var(--g50); border-left: 4px solid var(--blue500);
+  }
+  .meta { color: var(--g500); font-size: 13px; margin-bottom: 16px; }
+  table.spec { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.spec th, table.spec td { border: 1px solid var(--g200); padding: 8px 10px; text-align: left; vertical-align: top; }
+  table.spec th { background: var(--g50); width: 150px; }
+  table.spec ul { margin: 0; padding-left: 18px; }
+  table.spec li { margin-bottom: 4px; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: .92em; background: var(--g100); padding: 1px 4px; border-radius: 3px; }
+
+  ul.story-list { padding-left: 20px; }
+  ul.story-list > li { margin-bottom: 16px; font-size: 14px; color: var(--g700); }
+  ul.story-list .story-name { display: block; font-weight: 600; color: var(--g900); margin-bottom: 2px; }
+  ul.story-list .gwt { margin: 4px 0 0; padding-left: 16px; }
+  ul.story-list .gwt li { margin-bottom: 4px; font-size: 13px; }
+  ul.story-list .gwt b { color: var(--g900); font-weight: 600; }
+
+  /* ===== 화면 블록: 화면(풀사이즈) + 바로 아래 디스크립션 ===== */
+  .screens-main { display: flex; flex-direction: column; gap: 56px; margin-top: 20px; }
+  .screen-block { scroll-margin-top: 20px; }
+  .screen-title { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .screen-title .screen-num { font-size: 13px; font-weight: 700; color: var(--g500); }
+  .screen-title h3 { font-size: 16px; margin: 0; color: var(--g900); }
+  .screen-title h3 .kr { font-weight: 400; color: var(--g600); }
+  .screen-title .badge-doc { font-size: 11px; color: var(--g500); border: 1px solid var(--g200); border-radius: 4px; padding: 1px 6px; }
+  .screen-mock { border: 1px solid var(--g200); border-radius: 10px; padding: 28px 20px; background: var(--g25); }
+  .screen-mock.two-up { display: flex; gap: 44px; justify-content: center; flex-wrap: wrap; }
+  .frame-caption { text-align: center; font-size: 12px; color: var(--g500); margin: 10px 0 0; }
+
+  /* ===== 번호 주석(annotation) ===== */
+  .num-region { position: relative; }
+  .num-badge {
+    position: absolute; z-index: 41;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--g900); color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 3px #fff;
+    top: -10px; left: -10px;
+  }
+  /* 좌우 20px 패딩 래퍼 안의 영역: 배지를 프레임 좌측 여백에 맞춘다 */
+  .num-badge.inset { left: -30px; }
+  .num-badge.proposed { background: var(--or600); }
+  .num-badge.shared-needed { background: var(--blue600); }
+
+  /* ===== 프레임 안 컴포넌트 태깅(tag-note) — 형식 정본: sample/one-day-event/canvas-partner-settlement-list.html
+         주석 표기를 HTML 이스케이프해 "보이는 텍스트"로 렌더한다(배지형 칩이 아니라 모노스페이스 한 줄).
+         한 번호 영역에 컴포넌트가 여럿이면 " / " 로 이어 붙인다. ===== */
+  .tag-note { font-size: 11px; color: var(--g500); font-family: "SF Mono", Menlo, monospace; margin: 0 0 6px; }
+  /* 375 프레임 안: 참고 예시와 동일하게 자연 줄바꿈으로 처리한다(잘림 없음).
+     대신 한 영역의 태깅이 4줄을 넘지 않게 끊어서, 프레임이 실제 앱 화면으로 읽히는 선을 지킨다
+     — 영역 안 요소가 많아 더 길어지는 경우(화면 1의 신청 바텀시트)는 그 시트를 별도 화면으로
+     쪼갠 화면 2에서 요소별로 태깅한다. */
+  .phone .tag-note { padding: 0 20px; margin: 6px 0 4px; line-height: 1.5; overflow-wrap: anywhere; }
+  /* 부모가 이미 좌우 20px 패딩을 가진 컨텍스트(sheet-body / 설정 래퍼 등) */
+  .phone .tag-note.flush { padding-left: 0; padding-right: 0; }
+  /* 토스트류는 폭이 max-content/고정이라, 절대배치로 바로 위에 얹어 토스트 폭·모양을 건드리지 않는다 */
+  .app-toast > .tag-note { position: absolute; left: 0; right: 0; bottom: 100%; margin: 0 0 4px; padding: 0 0 0 14px; }
+  .app-toast.push > .tag-note { position: static; }
+
+  /* ===== 디스크립션 (화면당) ===== */
+  .screen-desc { margin-top: 14px; border: 1px solid var(--g200); border-radius: 10px; padding: 16px 20px; background: var(--g50); }
+  .screen-desc h4 { font-size: 12.5px; margin: 0 0 12px; color: var(--g500); text-transform: uppercase; letter-spacing: .04em; }
+  .desc-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .desc-legend li { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; color: var(--g700); }
+  .desc-legend .num {
+    flex: 0 0 auto; margin-top: 2px; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--g900); color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .desc-legend .num.proposed { background: var(--or600); }
+  .desc-legend .num.shared-needed { background: var(--blue600); }
+  .desc-legend strong { color: var(--g900); }
+  .new-component-note { margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--g300); font-size: 12.5px; color: var(--g600); }
+  .new-component-note strong { color: var(--g800); }
+  .new-component-note .proposed-name { color: var(--or700); font-weight: 600; }
+  .new-component-note .shared-name { color: var(--blue600); font-weight: 600; }
+
+  /* ===== 보이는 태그 칩 — 디스크립션 영역 안에만 둔다(화면 콘텐츠와 혼동 금지) ===== */
+  .tag-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; align-items: center; }
+  .tag-row .pair { display: inline-flex; align-items: center; gap: 4px; }
+  .tag {
+    font-family: "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.5;
+    background: var(--g100); color: var(--g800);
+    border: 1px solid var(--g200); border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+  }
+  .tag-row .pair > code {
+    font-family: "SF Mono", Menlo, monospace; font-size: 10.5px;
+    background: transparent; color: var(--g500); padding: 0; white-space: nowrap;
+  }
+  .tag.new { background: #fffcf5; border-color: var(--or400); color: var(--or700); }
+  .tag.shared { background: #f5faff; border-color: var(--blue400); color: var(--blue600); }
+  .tag.sample { background: #fff; border-style: dashed; color: var(--g500); }  /* 범례 예시 — 실제 태깅 아님 */
+
+  /* ===== 디자인 시스템 미보유(신규 필요·공용화 필요) 영역 — 화면 안에서는 색+점선으로만 구분 ===== */
+  .proposed-region { outline: 1px dashed var(--or400); outline-offset: -1px; background: rgba(255,250,235,.55); }
+  .shared-needed-region { outline: 1px dashed var(--blue400); outline-offset: -1px; }
+
+  /* ============================================================
+     앱 프레임 (max-width 480px 앱, 목업은 375px 뷰포트 기준)
+     ============================================================ */
+  .phone {
+    width: 375px; flex: 0 0 375px; position: relative; background: #fff;
+    border: 1px solid var(--g300); border-radius: 20px;
+    font-family: Pretendard, -apple-system, "Apple SD Gothic Neo", sans-serif;
+    letter-spacing: -0.25px; color: var(--g900); line-height: 1.35;
+  }
+  .phone-screen { position: relative; border-radius: 19px; }
+  .phone p, .phone span, .phone div, .phone button, .phone li { letter-spacing: -0.25px; }
+
+  /* --- Header (height 50 / padding 14px 18px / title body1.semibold) --- */
+  .app-header { height: 50px; padding: 14px 18px; display: flex; align-items: center; position: relative; background: #fff; border-radius: 19px 19px 0 0; }
+  .app-header .h-title { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); font-size: 16px; font-weight: 600; white-space: nowrap; }
+  .app-header .h-right { margin-left: auto; display: flex; gap: 18px; align-items: center; }
+  .app-header .h-left { display: flex; align-items: center; }
+
+  /* --- BottomMenu (height 54 / border-top gray_neutral_100 / label 11px 600 130%) --- */
+  .app-bottommenu { height: 54px; border-top: 1px solid var(--g100); display: flex; background: #fff; border-radius: 0 0 19px 19px; }
+  .app-bottommenu .tab { flex: 1; padding: 6px 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-decoration: none; }
+  .app-bottommenu .lbl { font-size: 11px; font-weight: 600; line-height: 130%; color: var(--g500); }
+  .app-bottommenu .tab.on .lbl { color: var(--g900); }
+
+  /* --- Button (size별 padding/폰트/radius, color별 bg/색 — buttonStyle.ts 실값) --- */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: none; cursor: pointer; font-family: inherit; transition: background-color .3s; }
+  .btn:disabled { cursor: not-allowed; }
+  .s-xs  { padding: 9px 12px;  font-size: 11px; font-weight: 500; line-height: 127.3%; letter-spacing: .342px; border-radius: 6px; }
+  .s-sm  { padding: 9px 12px;  font-size: 13px; font-weight: 600; line-height: 135%; border-radius: 7px; }
+  .s-md  { padding: 11px 14px; font-size: 14px; font-weight: 600; line-height: 135%; border-radius: 6px; }
+  .s-lg  { padding: 12px 16px; font-size: 15px; font-weight: 600; line-height: 135%; border-radius: 8px; }
+  .s-xl  { padding: 14px 18px; font-size: 16px; font-weight: 600; line-height: 135%; border-radius: 8px; }
+  .s-2xl { padding: 16px 22px; font-size: 18px; font-weight: 600; line-height: 135%; border-radius: 10px; }
+  .c-black { background: var(--g950); color: #fff; }
+  .c-black:disabled { background: var(--g100); color: var(--g400); box-shadow: inset 0 0 0 1px var(--g150); }
+  .c-white { background: #fff; color: var(--g900); }
+  .c-whiteWithLine { background: #fff; color: var(--g900); border: 1px solid var(--g900); }
+  .c-greyOutLine { background: #fff; border: 1px solid var(--g300); color: var(--g700); }
+  .c-greyOutLine:disabled { color: var(--g400); border: 1px solid var(--g200); }
+  .c-skyblue { background: var(--blue50); color: var(--blue500); }
+  .c-deepBlue { background: var(--blue500); color: #fff; }
+  .c-grey { background: var(--g100); border: 1px solid var(--g200); color: var(--g700); }
+  .btn-full { width: 100%; }
+
+  /* --- Badge (radius 2px, variant별 badgeStyle.ts 실값) --- */
+  .badge { display: inline-flex; align-items: center; border-radius: 2px; white-space: nowrap; }
+  .b-onSale      { padding: 4px 6px; font-size: 12px; font-weight: 600; color: #fff; background: var(--blue500); }
+  .b-pendingSale { padding: 4px 6px; font-size: 12px; font-weight: 600; color: #fff; background: var(--g900); }
+  .b-saleClosed  { padding: 4px 6px; font-size: 12px; font-weight: 600; color: var(--g500); background: var(--g300); }
+  .b-revenue     { padding: 4px 6px; font-size: 12px; font-weight: 700; color: var(--blue500); background: var(--blue50); }
+  .b-revenueDark { padding: 5px 6px; font-size: 11px; font-weight: 600; color: #fff; background: var(--g800); }
+
+  /* --- NoticeBox(variant=CTA): padding 16/20, orange_50 bg, orange_200 bottom line, radius 0 --- */
+  .noticebox-cta { padding: 16px 20px; background: var(--or50); border-bottom: 1px solid var(--or200); display: flex; flex-direction: column; gap: 16px; }
+  .noticebox-cta .nb-title { font-size: 16px; font-weight: 700; color: var(--or500); }
+  .noticebox-cta .nb-desc { font-size: 14px; font-weight: 400; color: var(--g700); }
+  .noticebox-cta .nb-btn { border: none; border-radius: 24px; background: var(--or100); padding: 10px 0; width: 100%; font-size: 16px; font-weight: 700; color: var(--or500); display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font-family: inherit; }
+
+  /* --- Switch (44x24 track / 18x18 knob / on: blue_500) --- */
+  .switch { width: 44px; height: 24px; border-radius: 999px; padding: 4px; background: var(--g200); border: none; cursor: pointer; flex-shrink: 0; display: block; transition: background-color .2s; }
+  .switch .knob { width: 18px; height: 18px; border-radius: 999px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,.25); display: block; transition: transform .2s; }
+  .switch.on { background: var(--blue500); }
+  .switch.on .knob { transform: translateX(18px); }
+
+  /* --- CheckboxInput (20x20 / radius 6 / checked bg gray_neutral_900 / label body2.medium) --- */
+  .ds-checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .ds-checkbox .box { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--g300); background: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .ds-checkbox .box svg { opacity: 0; }
+  .ds-checkbox.on .box { background: var(--g900); border-color: transparent; }
+  .ds-checkbox.on .box svg { opacity: 1; }
+  .ds-checkbox .lbl { font-size: 15px; font-weight: 500; color: var(--g700); }
+
+  /* --- SectionTitle (headline1.bold / brand_800) --- */
+  .section-title { font-size: 18px; font-weight: 700; color: var(--g800); margin: 0; }
+  /* --- ListText (label1.medium / gray_neutral_500) --- */
+  .list-text { font-size: 14px; font-weight: 500; color: var(--g500); margin: 0; }
+  /* --- ThinDivider --- */
+  .thin-divider { border: none; border-top: 1px solid var(--g200); margin: 0; }
+  /* --- InfoRow --- */
+  .info-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+
+  /* --- RemovableChip (padding 8/14 · radius full · filled bg gray_neutral_100 · label1.medium) --- */
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 9999px; font-size: 14px; font-weight: 500; color: var(--g800); }
+  .chip.filled { background: var(--g100); }
+  .chip.outlined { background: transparent; border: 1px solid var(--g200); }
+  .chip .x { border: none; background: none; padding: 0; display: flex; cursor: pointer; }
+
+  /* --- OptionSelectBox (radius 8 / title 12x14 body2.medium / item 15x14 + top line gray_100) --- */
+  .optionbox { width: 100%; border-radius: 8px; border: 1px solid var(--g200); overflow: hidden; }
+  .optionbox .opt-title { padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 15px; font-weight: 500; cursor: pointer; }
+  .optionbox .opt-list { max-height: 0; overflow: hidden; transition: max-height .3s ease-out; }
+  .optionbox.open .opt-list { max-height: 240px; overflow-y: auto; }
+  .optionbox .opt-item { padding: 15px 14px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--g100); font-size: 15px; font-weight: 500; cursor: pointer; }
+  .optionbox .opt-item.picked { background: var(--g50); }
+  .optionbox .opt-item .soldout { font-size: 13px; font-weight: 500; color: var(--g400); }
+
+  /* --- 상품 가로 행 (참조: my-page 페이지전용 PastHistoryGoodsItem 실값) --- */
+  .prow { display: flex; gap: 8px; }
+  .prow .thumb85 { width: 85px; height: 85px; border-radius: 8px; background: var(--g100); flex-shrink: 0; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .prow .info { display: flex; flex-direction: column; justify-content: space-between; width: 100%; gap: 8px; min-width: 0; }
+  .prow .gname { font-size: 13px; font-weight: 500; color: #121212; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .prow .oname { font-size: 12px; font-weight: 400; line-height: 133.4%; letter-spacing: .302px; color: #70707b; }
+  .prow .gprice { font-size: 16px; font-weight: 600; line-height: 26px; letter-spacing: .091px; color: #121212; }
+  .prow .rowfoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+  /* --- 상품상세 썸네일 · 가격 블록 (참조: 페이지전용 GoodsThumbnail / GoodsSection1) --- */
+  .goods-thumb { position: relative; aspect-ratio: 1/1; background: var(--g100); display: flex; align-items: center; justify-content: center; }
+  .goods-thumb .ph { position: absolute; top: 14px; left: 14px; font-size: 12px; color: var(--g400); font-weight: 500; }
+  .goods-thumb .showindex { position: absolute; right: 14px; bottom: 14px; background: rgba(0,0,0,.5); color: #fff; font-size: 12px; font-weight: 500; padding: 4px 8px; border-radius: 6px; }
+  .soldout-overlay { position: absolute; inset: 0; background: rgba(17,25,39,.55); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #fff; }
+  .soldout-overlay .so-text { font-size: 20px; font-weight: 700; }
+  .soldout-overlay .so-sub { font-size: 13px; font-weight: 500; color: var(--g200); }
+  .goods-info { padding: 20px; display: flex; flex-direction: column; gap: 6px; }
+  .goods-info .brand { font-size: 14px; font-weight: 600; color: var(--g900); }
+  .goods-info .pname { font-size: 14px; font-weight: 400; color: var(--g700); }
+  .goods-info .price-line { display: flex; align-items: baseline; gap: 6px; margin-top: 6px; }
+  .goods-info .rate { font-size: 13px; font-weight: 700; color: var(--red500); }
+  .goods-info .final { font-size: 16px; font-weight: 700; color: var(--g900); }
+  .goods-info .origin { font-size: 13px; font-weight: 500; color: var(--g400); text-decoration: line-through; }
+
+  /* --- Bottom (하단 고정 CTA 영역) --- */
+  .app-bottom { padding: 10px 20px 20px; background: #fff; border-top: 1px solid var(--g100); display: flex; gap: 8px; border-radius: 0 0 19px 19px; }
+
+  /* --- 오버레이 전용 클리핑 레이어: 닫힌 바텀시트가 프레임 밖으로 새지 않게 가둔다.
+         번호 배지는 이 레이어 바깥에 있어 좌측 여백으로 계속 삐져나온다. --- */
+  .overlay-layer { position: absolute; inset: 0; z-index: 30; overflow: hidden; border-radius: 19px; pointer-events: none; }
+  .overlay-layer > * { pointer-events: auto; }
+
+  /* --- Backdrop + 바텀시트(InfoConfirmSheet 골격) --- */
+  .app-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); z-index: 30; opacity: 0; pointer-events: none; transition: opacity .2s; border-radius: 19px; }
+  .app-backdrop.open { opacity: 1; pointer-events: auto; }
+  .app-sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 31; background: #fff; border-radius: 16px 16px 0 0; padding-top: 32px; display: flex; flex-direction: column; gap: 24px; transform: translateY(105%); transition: transform .28s ease-out; }
+  .app-sheet.open { transform: translateY(0); }
+  .sheet-textblock { padding: 0 20px; display: flex; flex-direction: column; gap: 8px; }
+  .sheet-textblock.center { align-items: center; text-align: center; }
+  .sheet-desc { font-size: 15px; font-weight: 400; color: var(--g700); white-space: pre-line; }
+  .sheet-body { padding: 0 20px; display: flex; flex-direction: column; gap: 12px; }
+  .sheet-buttons { padding: 10px 20px 24px; display: flex; gap: 8px; }
+
+  /* --- Toast (pill: padding 14/16 radius 4 rgba(0,0,0,.8) label1.medium) --- */
+  .app-toast { position: absolute; left: 50%; transform: translateX(-50%); z-index: 40; opacity: 0; pointer-events: none; transition: opacity .2s; width: max-content; max-width: 88%; }
+  .app-toast.show { opacity: 1; }
+  .app-toast.top { top: 54px; }
+  .app-toast.bottom { bottom: 50px; }
+  .app-toast .msg { padding: 14px 16px; border-radius: 4px; background: rgba(0,0,0,.8); color: #fff; font-size: 14px; font-weight: 500; line-height: 135%; }
+  .app-toast .msg .go { color: var(--blue400); font-size: 14px; font-weight: 600; text-decoration: underline; margin-left: 8px; cursor: pointer; }
+  .app-toast.push { width: 300px; }
+  .app-toast.push .msg { background: #fff; color: var(--g700); border-radius: 8px; box-shadow: 0 4px 8px 3px rgba(0,0,0,.15); display: flex; gap: 10px; align-items: flex-start; }
+  .app-toast.push .p-title { font-size: 14px; font-weight: 500; color: var(--g900); }
+  .app-toast.push .p-desc { font-size: 13px; font-weight: 400; color: var(--g600); margin-top: 2px; }
+
+  /* --- EmptyState (셸: column center gap 24 / 텍스트·아이콘은 호출부 소유) --- */
+  .emptystate { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; gap: 24px; padding: 72px 20px; }
+  .emptystate .es-text { font-size: 15px; font-weight: 400; color: var(--g500); text-align: center; line-height: 150%; }
+
+  .hidden { display: none !important; }
+  .list-wrap { display: flex; flex-direction: column; }
+  .list-wrap > .prow-item { padding: 16px 20px; }
+  .list-wrap > .prow-item + .prow-item { border-top: 1px solid var(--g100); }
+  .stack { display: flex; flex-direction: column; }
+
+  /* ===== 우측 플로팅 디스크립션 패널 =====
+     화면 아래의 .screen-desc 블록이 원본(작성 대상)이고,
+     패널은 스크롤 위치에 해당하는 블록을 복제해 보여주기만 한다. */
+  .screen-desc { display: none !important; }
+  .desc-panel {
+    position: fixed; top: 72px; right: 20px; z-index: 60;
+    width: 320px; max-height: calc(100vh - 110px);
+    display: flex; flex-direction: column;
+    border: 1px solid #d2d6db; border-radius: 10px;
+    background: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.10);
+  }
+  .desc-panel__head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb; border-radius: 9px 9px 0 0;
+  }
+  .desc-panel.collapsed .desc-panel__head { border-bottom: none; border-radius: 9px; }
+  .desc-panel__label { font-size: 11.5px; font-weight: 700; color: #384250; letter-spacing: .03em; }
+  .desc-panel__screen {
+    flex: 1; min-width: 0; font-size: 11px; color: #6c737f;
+    font-family: "SF Mono", Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .desc-panel__toggle {
+    flex: 0 0 auto; border: 1px solid #d2d6db; background: #fff;
+    cursor: pointer; font-size: 11px; color: #4d5761;
+    border-radius: 6px; padding: 2px 8px; line-height: 1.5;
+  }
+  .desc-panel__body { padding: 14px; overflow-y: auto; overflow-wrap: anywhere; }
+  /* 패널 폭이 좁으므로 태그·스토리북 경로가 잘리지 않고 줄바꿈되게 한다.
+     .pair 가 inline-flex 라 자식이 min-width:auto 로 안 줄어드는 문제를 함께 푼다. */
+  .desc-panel__body .desc-legend li { min-width: 0; }
+  .desc-panel__body .desc-legend li > div { min-width: 0; flex: 1 1 auto; }
+  .desc-panel__body .tag-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .desc-panel__body .tag-row .pair { display: block; max-width: 100%; min-width: 0; }
+  .desc-panel__body .tag-row .pair > * { min-width: 0; max-width: 100%; }
+  .desc-panel__body code { white-space: normal; overflow-wrap: anywhere; }
+  .desc-panel.collapsed .desc-panel__body { display: none; }
+  .desc-panel__body .screen-desc {
+    display: block !important; border: none; border-radius: 0;
+    padding: 0; background: none; margin: 0;
+  }
+  .desc-panel__body .screen-desc h4 { margin-bottom: 10px; }
+  .desc-legend .comp {
+    display: block; margin-top: 3px;
+    font-size: 11px; color: #6c737f;
+    font-family: "SF Mono", Menlo, monospace;
+  }
+  .desc-legend .comp.proposed { color: #b54708; }
+  @media (max-width: 1320px) { .desc-panel { width: 280px; right: 12px; } }
+</style>
+</head>
+<body>
+
+<h1>품절 상품 재입고 알림</h1>
+<p class="meta">
+  통합캔버스 · 작성 기준 <code>one-canvas/one-canvas-rule.md</code>(A형 — 화면 있음) ·
+  컴포넌트 태깅 어휘 <code>design-system/app/COMPONENT-CATALOG.md</code> ·
+  아이콘 마크업 <code>design-system/app/ICON-MARKUP.md</code>.
+  화면의 버튼·토글·바텀시트·체크박스는 실제로 클릭하면 동작하는 목업입니다.
+</p>
+
+<!-- ================= 도메인 ================= -->
+<h2>도메인</h2>
+<table class="spec">
+  <tr><th>도메인</th><td><code>product (상품)</code></td></tr>
+  <tr><th>대상 플랫폼</th><td>앱(사용자 대상) → <code>design-system/app</code> 컴포넌트만 참조</td></tr>
+</table>
+
+<!-- ================= 참고 자료 ================= -->
+<h2>참고 자료</h2>
+<ul style="font-size:14px; color:var(--g700); padding-left:20px;">
+  <li><strong>판매 상태 타입 정본</strong> — <code>groupbuy-next src/shared/api/types.ts:8-14</code> — <code>SaleStatus</code> 6값(<code>PENDING_SALE</code> / <code>ON_SALE</code> / <code>OUT_OF_STOCK</code> / <code>SALE_SUSPENDED</code> / <code>SALE_ENDED</code> / <code>PENDING_DELETION</code>). 이 기획의 트리거는 <code>OUT_OF_STOCK → ON_SALE</code> 전이 하나뿐이다.</li>
+  <li><strong>현행 품절 CTA 동작</strong> — <code>src/app/goods/_shared/component/goodsBottom/goodsBottom.tsx:79-105</code> — 상태가 <code>ON_SALE</code>이 아니면 하단 CTA를 <code>disabled</code> 처리하고 텍스트만 <code>common.sharedProductBuying.buttonText.OUT_OF_STOCK</code>(“품절”)로 바꾼다. 이후 사용자가 할 수 있는 동작이 없다 — 이 기획이 메우려는 공백.</li>
+  <li><strong>푸시 발송 경로</strong> — <code>src/shared/constants/flutterMessageKeyScheme.ts:1-36</code> · <code>src/shared/api/member/apis.ts:262</code>(<code>POST /member/push-tokens</code>) — 웹푸시·FCM SDK는 없고 <strong>Flutter WebView 브릿지 기반 앱 푸시만</strong> 존재한다. 발송 채널을 앱 푸시로 한정하는 근거.</li>
+  <li><strong>알림 수신 동의 화면</strong> — <code>src/app/my-page/settings/settingsClient.tsx:14-60</code> — 마케팅 수신 동의 토글과 OS 푸시 권한 꺼짐 안내(<code>settingPage.alarm.*</code>)가 이미 이 페이지에 있다. 재입고 알림 수신 설정이 붙을 자리.</li>
+  <li><strong>기존 관심상품 자산</strong> — <code>src/shared/hook/useHandleProductLike.ts</code> · <code>/my-page/likes</code> — 찜은 “저장 + 목록 열람”까지만이고 상태 전이 알림 개념이 없다(찜 API에 알림 필드·훅 없음). 재입고 알림을 찜에 얹지 않고 별도 구독으로 두는 근거.</li>
+</ul>
+
+<!-- ================= 에픽 ================= -->
+<h2>에픽</h2>
+<table class="spec">
+  <tr><th>에픽</th><td><code>epic-restock-alert (품절 상품 재입고 알림)</code></td></tr>
+  <tr><th>목적</th>
+      <td>품절 상품 상세에 도달한 구매 의사를 그대로 잃지 않는다. 현재 품절 상품은 하단 CTA가 비활성 “품절”로 끝나 사용자가 취할 행동이 하나도 없다. 재입고 알림 구독을 만들어 이탈한 수요를 재입고 시점에 재방문·구매로 회수하고, 동시에 어떤 상품·옵션에 대기 수요가 얼마나 쌓였는지를 관측 가능한 지표로 남긴다.</td></tr>
+  <tr><th>주요 범위 (In-Scope)</th>
+      <td><ul>
+        <li>상품 상세에서 <code>OUT_OF_STOCK</code>일 때 하단 CTA를 “재입고 알림 받기”로 전환(현재는 비활성 “품절”)</li>
+        <li>옵션 단위 알림 신청 바텀시트 — 품절 옵션만 선택 가능, 다중 선택, 수신 동의 확인</li>
+        <li>알림 신청 완료 후 CTA 상태 전환(신청 완료 ↔ 해제) 및 재진입 시 신청 상태 복원</li>
+        <li>마이페이지 하위 “재입고 알림” 내역 화면 — 목록 조회, 개별 해제, 빈 상태</li>
+        <li>상품이 <code>ON_SALE</code>로 전이되면 앱 푸시 발송 + 딥링크로 상품 상세 진입, 발송된 구독은 1회성으로 종료</li>
+        <li>설정 화면에 “재입고 알림 수신” 토글 추가, OS 푸시 권한이 꺼져 있으면 앱 설정 이동 안내</li>
+      </ul></td></tr>
+  <tr><th>제외 범위 (Out-of-Scope)</th>
+      <td><ul>
+        <li><strong>웹 푸시 · 이메일 · SMS 발송</strong> — 현 서비스에 웹푸시/FCM SDK가 없고 Flutter 브릿지 앱 푸시만 존재한다. 채널 확장은 별도 에픽.</li>
+        <li><strong>인앱 알림함(알림 리스트 페이지)</strong> — 현재 알림함 자체가 없어 신설 규모가 이 에픽보다 크다. 이번에는 푸시 + 마이페이지 내역으로 대체하고 후속 에픽으로 이관.</li>
+        <li><strong>재입고 감지·발송 배치의 내부 설계</strong> — 화면이 없는 서버 작업이므로 <code>canvas-app-restock-alert-batch-noscreen.html</code>(B형)로 분리한다. 이 캔버스는 발송 결과를 사용자가 받는 지점까지만 다룬다.</li>
+        <li><strong>재고 예약·선점(알림 받은 사람 우선 구매)</strong> — 결제·재고 차감 정책 변경이 동반되므로 이번 범위에서 제외.</li>
+        <li><strong>찜(<code>/my-page/likes</code>)과의 통합</strong> — 찜은 저장 기능이고 재입고 알림은 상태 전이 구독이다. 데이터 모델을 합치지 않고 병존시키며, 통합 여부는 지표 확인 후 재검토.</li>
+        <li><strong><code>SALE_ENDED</code> · <code>SALE_SUSPENDED</code> 등 그 외 판매 불가 상태</strong> — 재입고를 기대할 수 없거나 운영 판단이 필요한 상태라 알림 대상에서 제외. <code>OUT_OF_STOCK</code>만 대상.</li>
+      </ul></td></tr>
+  <tr><th>완료 기준</th>
+      <td><ul>
+        <li><code>OUT_OF_STOCK</code> 상품 상세에서 옵션을 골라 알림을 신청하면 CTA가 “재입고 알림 신청 완료”로 바뀌고, 화면을 다시 열어도 그 상태가 유지된다.</li>
+        <li>마이페이지 “재입고 알림”에서 신청 내역을 확인하고 개별 해제할 수 있으며, 0건이면 빈 상태와 상품 둘러보기 진입점이 보인다.</li>
+        <li>신청한 상품이 <code>ON_SALE</code>로 전이되면 앱 푸시를 수신하고, 눌렀을 때 해당 상품 상세로 진입하며 그 구독은 종료 처리된다.</li>
+        <li>OS 푸시 권한이 꺼진 사용자는 신청 시점에 그 사실과 해결 방법(앱 설정 이동)을 안내받는다.</li>
+      </ul></td></tr>
+</table>
+
+<!-- ================= 유저스토리 ================= -->
+<h2>유저스토리</h2>
+<ul class="story-list">
+  <li>
+    <span class="story-name">story-restock-alert-apply (품절 상품을 사려던 구매자가 재입고 시점을 놓치지 않으려고 알림을 신청한다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 판매 상태가 <code>OUT_OF_STOCK</code>인 상품 상세에 로그인한 구매자가 있고, <b>When</b> 하단 “재입고 알림 받기”를 누르면, <b>Then</b> 알림 신청 바텀시트가 열리고 품절된 옵션 목록이 표시된다.</li>
+      <li><b>Given</b> 알림 신청 바텀시트에서 옵션을 하나 이상 선택하고 수신 동의에 체크했고, <b>When</b> 신청을 누르면, <b>Then</b> 신청 완료 안내가 뜨고 하단 CTA가 “재입고 알림 신청 완료”로 바뀐다.</li>
+      <li><b>Given</b> 옵션을 선택하지 않았거나 수신 동의에 체크하지 않았고, <b>When</b> 바텀시트를 보면, <b>Then</b> 신청 버튼이 비활성 상태로 유지된다.</li>
+      <li><b>Given</b> 로그인하지 않은 사용자가 품절 상품 상세에 있고, <b>When</b> “재입고 알림 받기”를 누르면, <b>Then</b> 로그인 안내를 먼저 보여주고 로그인 후 다시 신청을 이어갈 수 있다.</li>
+      <li><b>Given</b> 이미 같은 옵션에 알림을 신청해둔 구매자가 상품 상세에 다시 들어왔고, <b>When</b> 화면을 보면, <b>Then</b> 하단 CTA가 “재입고 알림 신청 완료” 상태로 복원되어 중복 신청을 시도하지 않는다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-restock-alert-push-permission (알림을 신청했지만 기기 푸시 권한이 꺼져 있는 구매자가 알림을 실제로 받을 수 있게 한다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> OS 푸시 권한이 허용되지 않은 상태에서 알림 신청을 마쳤고, <b>When</b> 신청 완료 화면을 보면, <b>Then</b> 지금은 알림을 받을 수 없다는 사실과 앱 설정으로 이동하는 안내를 함께 보여준다.</li>
+      <li><b>Given</b> 그 안내에서 앱 설정 이동을 눌렀고, <b>When</b> 권한을 허용하고 돌아오면, <b>Then</b> 안내가 사라지고 알림 수신 가능 상태로 표시된다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-restock-alert-manage (여러 상품에 알림을 걸어둔 구매자가 신청 내역을 확인하고 필요 없는 건을 해제한다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 재입고 알림을 신청한 내역이 있는 구매자가 마이페이지 “재입고 알림”에 들어왔고, <b>When</b> 목록을 보면, <b>Then</b> 상품·옵션·신청일과 현재 상태(알림 대기 / 재입고 완료)가 신청일 최신순으로 표시된다.</li>
+      <li><b>Given</b> 목록에 알림 대기 건이 있고, <b>When</b> 특정 건의 해제를 누르면, <b>Then</b> 해당 건이 목록에서 제거되고 해제 결과를 안내한다.</li>
+      <li><b>Given</b> 신청 내역이 하나도 없거나 모두 해제했고, <b>When</b> 목록을 보면, <b>Then</b> 빈 상태 안내와 상품을 둘러볼 수 있는 진입점을 보여준다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-restock-alert-receive (알림을 신청한 구매자가 재입고 알림을 받고 곧바로 구매로 이어간다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 알림을 신청한 상품의 판매 상태가 <code>OUT_OF_STOCK</code>에서 <code>ON_SALE</code>로 바뀌었고, <b>When</b> 구매자가 앱 푸시를 받아 누르면, <b>Then</b> 해당 상품 상세로 진입해 바로 구매를 진행할 수 있다.</li>
+      <li><b>Given</b> 재입고 알림이 발송된 구독 건이 있고, <b>When</b> 구매자가 마이페이지 내역을 보면, <b>Then</b> 그 건은 “재입고 완료”로 표시되고 다시 알림이 발송되지 않는다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-restock-alert-receive-setting (알림이 과하다고 느낀 구매자가 재입고 알림 수신 자체를 끈다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 설정 화면에 있는 구매자가 있고, <b>When</b> “재입고 알림 수신”을 끄면, <b>Then</b> 설정 변경 결과를 안내하고 이후 재입고 알림이 발송되지 않는다.</li>
+      <li><b>Given</b> 재입고 알림 수신을 끈 상태에서 신청 내역이 남아 있고, <b>When</b> 마이페이지 내역을 보면, <b>Then</b> 신청 내역 자체는 유지되고 수신만 중지된 상태임을 알 수 있다.</li>
+    </ul>
+  </li>
+</ul>
+
+<!-- ================= 화면(디자인) ================= -->
+<h2>화면(디자인)</h2>
+<p class="meta">
+  <code>design-system/app</code> 공용 컴포넌트를 참조해 구성했다. 요소마다 남긴
+  <code>&lt;!-- component: X(prop=값) --&gt;</code> 는 <code>COMPONENT-CATALOG.md</code> 의 <em>태깅 이름</em>과
+  <em>지정 가능한 값</em> 열에서만 골랐다.
+  회색 번호(<span style="display:inline-flex;width:16px;height:16px;border-radius:50%;background:var(--g900);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;vertical-align:middle;">n</span>)는 기존 공용 컴포넌트로 구성되는 영역,
+  주황 점선 + 주황 번호(<span style="display:inline-flex;width:16px;height:16px;border-radius:50%;background:var(--or600);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;vertical-align:middle;">n</span>)는 <em>신규 컴포넌트가 필요한</em> 영역,
+  파랑 점선 + 파랑 번호(<span style="display:inline-flex;width:16px;height:16px;border-radius:50%;background:var(--blue600);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;vertical-align:middle;">n</span>)는 <em>기존 페이지 전용 컴포넌트를 공용화해야</em> 하는 영역이다.
+  구분은 색·점선으로만 하고 “신규 필요”·“미보유” 같은 문구는 화면 콘텐츠에 넣지 않는다.
+</p>
+<p class="meta" style="margin-top:-8px;">
+  <strong>태그 칩 읽는 법</strong> — 디스크립션 번호마다 그 영역이 쓰는 컴포넌트를
+  <span class="tag sample">이름(prop=값)</span> 칩으로 표시하고, 옆의 <code>story id</code>는
+  <code>design-system/app</code> 스토리북에서 그 컴포넌트를 여는 값이다
+  (<code>yarn storybook</code> 후 <code>http://localhost:6007/?path=/story/&lt;story id&gt;</code>).
+  칩 표기는 소스의 <code>&lt;!-- component: … --&gt;</code> 주석과 동일하다 — 주석은 2단계 개발용, 칩은 열람용으로 <strong>둘 다</strong> 남긴다.
+  화면 프레임 안에서도 번호 배지 옆·설명 대상 요소 바로 위에 같은 주석 표기를
+  <code>&lt;!-- component: X(prop=값) --&gt;</code> 모노스페이스 한 줄로 함께 보여준다(요소↔컴포넌트 대응 확인용, 화면 카피가 아니다).
+  story id는 카탈로그 <code>story id</code> 열의 실재 값만 쓰며, 지목한 값 전용 스토리가 있으면 그 스토리를,
+  없으면 해당 컴포넌트의 대표 스토리를 가리킨다(조합 전용 스토리가 없는 경우가 있다).
+  <span class="tag shared">공용화 필요 …</span>는 페이지 전용 컴포넌트의 공용 승격 대상(옆은 소스 경로),
+  <span class="tag new">신규 필요 …</span>은 공용·페이지 전용 어디에도 없는 것이다.
+</p>
+
+<div class="screens-main">
+
+  <!-- ================================================================
+       화면 1 : goods-sold-out
+       ================================================================ -->
+  <section class="screen-block" id="screen-goods">
+    <div class="screen-title">
+      <span class="screen-num">화면 1</span>
+      <h3>goods-sold-out <span class="kr">(상품 상세 — 품절)</span></h3>
+      <span class="badge-doc">story-restock-alert-apply / push-permission</span>
+    </div>
+
+    <div class="screen-mock">
+      <div class="phone">
+        <div class="phone-screen">
+
+          <!-- 1. Header -->
+          <div class="num-region">
+            <span class="num-badge">1</span>
+            <!-- component: Header -->
+            <!-- component: BackSVG -->
+            <!-- component: ShoppingCartIconSVG -->
+            <div class="app-header">
+              <div class="h-left">
+                <!-- component: BackSVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 18L9 12L15 6" stroke="#111927" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <div class="h-right">
+                <!-- component: ShoppingCartIconSVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15.9996 8C15.9996 9.06087 15.5782 10.0783 14.828 10.8284C14.0779 11.5786 13.0605 12 11.9996 12C10.9387 12 9.92131 11.5786 9.17116 10.8284C8.42102 10.0783 7.99959 9.06087 7.99959 8M3.63281 7.40138L2.93281 15.8014C2.78243 17.6059 2.70724 18.5082 3.01227 19.2042C3.28027 19.8157 3.74462 20.3204 4.33177 20.6382C5.00006 21 5.90545 21 7.71623 21H16.283C18.0937 21 18.9991 21 19.6674 20.6382C20.2546 20.3204 20.7189 19.8157 20.9869 19.2042C21.2919 18.5082 21.2167 17.6059 21.0664 15.8014L20.3664 7.40138C20.237 5.84875 20.1723 5.07243 19.8285 4.48486C19.5257 3.96744 19.0748 3.5526 18.5341 3.29385C17.92 3 17.141 3 15.583 3L8.41623 3C6.85821 3 6.07921 3 5.4651 3.29384C4.92433 3.5526 4.47349 3.96744 4.17071 4.48486C3.82689 5.07243 3.76219 5.84875 3.63281 7.40138Z" stroke="#111927" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. 썸네일 + 품절 오버레이(신규) -->
+          <div class="num-region">
+            <span class="num-badge">2</span>
+            <!-- component: ThumbnailSwiper -->
+            <!-- ThumbnailSwiper.experienceType 의도적 미전달 — 캠페인 전용 optional prop이다.
+                 CampaignExperienceType = 'PRODUCT' | 'VISIT' (shared/api/campaign/@types/types.ts:13)
+                 값을 넘기면 좌상단에 캠페인 체험유형 라벨이 렌더된다 (thumbnailSwiper.tsx:74-80,
+                 t(`common.campaignShared.filter.campaignType.${experienceType}`)).
+                 실제 호출부: campaign/[id]/campaignDetailClient.tsx:353 전달 /
+                 goods/_shared/component/thumbnail/goodsThumbnail.tsx:62-67 미전달 /
+                 sample-invitation/.../sampleProductClient.tsx:95 미전달.
+                 이 화면은 goods 상품 상세이므로 미전달이 맞다. -->
+            <!-- component: ShowIndex(type=GOODS) -->
+            <div class="goods-thumb">
+              <span class="ph">상품 이미지</span>
+              <span class="showindex">1 / 5</span>
+              <!-- 아래 오버레이는 카탈로그에 대응 컴포넌트가 없다 → 주황 점선 -->
+            <!-- 신규 필요: SoldOutOverlay — 카탈로그에 대응 컴포넌트 없음 -->
+              <div class="soldout-overlay proposed-region">
+                <span class="num-badge proposed" style="top:10px; left:10px;">3</span>
+                <!-- 신규 필요: SoldOutOverlay -->
+                <span class="so-text">일시 품절</span>
+                <span class="so-sub">재입고 알림을 받을 수 있어요</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. 상품 기본 정보 -->
+          <div class="num-region">
+            <span class="num-badge">4</span>
+            <!-- 참조 전용(page-local): GoodsSection1 — 태깅 대상 아님, 이 화면의 수정 대상 -->
+            <!-- component: Badge(variant=saleClosed) -->
+            <!-- component: ThinDivider -->
+            <!-- 참조 전용(page-local): GoodsSection1 -->
+            <div class="goods-info">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <!-- component: Badge(variant=saleClosed) -->
+                <span class="badge b-saleClosed">품절</span>
+                <span class="brand">오늘의부엌</span>
+              </div>
+              <p class="pname" style="margin:2px 0 0;">데일리 스텐 텀블러 500ml (2color)</p>
+              <div class="price-line">
+                <span class="rate">28%</span>
+                <span class="final">17,900원</span>
+                <span class="origin">24,900원</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- component: ThinDivider -->
+          <hr class="thin-divider" />
+
+          <!-- 5. NoticeBox(CTA) -->
+          <div class="num-region" style="margin-top:0;">
+            <span class="num-badge">5</span>
+            <!-- component: NoticeBox(variant=CTA) -->
+            <div class="noticebox-cta">
+              <div>
+                <p class="nb-title" style="margin:0;">지금은 품절된 상품이에요</p>
+                <p class="nb-desc" style="margin:6px 0 0;">재입고되면 알림으로 가장 먼저 알려드릴게요.</p>
+              </div>
+              <button class="nb-btn" id="g-noticeBtn" type="button">
+                재입고 알림 받기
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3.33398 10H16.6673M11.6673 15L16.6673 10L11.6673 5" stroke="#FDB022" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 6. 푸시 권한 안내(조건부) -->
+          <div class="num-region hidden" id="g-permBlock">
+            <span class="num-badge">6</span>
+            <!-- component: NoticeBox(variant=CTA) -->
+            <div class="noticebox-cta" style="background:var(--or50);">
+              <div>
+                <p class="nb-title" style="margin:0;">알림 수신이 꺼져 있어요</p>
+                <p class="nb-desc" style="margin:6px 0 0;">기기 설정에서 알림을 켜야 재입고 소식을 받을 수 있어요.</p>
+              </div>
+              <button class="nb-btn" id="g-permBtn" type="button">앱 설정으로 이동</button>
+            </div>
+          </div>
+
+          <!-- 7. Bottom + Button -->
+          <div class="num-region" style="margin-top:0;">
+            <span class="num-badge">7</span>
+            <!-- component: Bottom -->
+            <!-- component: Button(size=2xl, color=black) -->
+            <!-- component: Button(size=2xl, color=greyOutLine) -->  <!-- 신청 완료 상태 -->
+            <!-- 참조 전용(page-local): GoodsBottom — 태깅 대상 아님, 이 화면의 수정 대상 -->
+            <!-- 참조 전용(page-local): GoodsBottom -->
+            <div class="app-bottom">
+              <button class="btn s-2xl c-black btn-full" id="g-cta" type="button">재입고 알림 받기</button>
+            </div>
+          </div>
+
+          <!-- Backdrop + 알림 신청 바텀시트 -->
+          <div class="overlay-layer">
+          <!-- component: Backdrop -->
+          <div class="app-backdrop" id="g-backdrop"></div>
+          <!-- component: InfoConfirmSheet(align=stretch) -->
+          <div class="app-sheet" id="g-sheet">
+            <span class="num-badge" style="top:8px; left:8px;">8</span>
+            <div class="sheet-textblock">
+              <!-- 이 시트의 내부 요소(OptionSelectBox·RemovableChip·CheckboxInput·ListText·Button)별 태깅은 화면 2에서 번호 영역마다 따로 붙인다 -->
+              <!-- component: Backdrop -->
+              <!-- component: InfoConfirmSheet(align=stretch) -->
+              <!-- component: SectionTitle -->
+              <!-- component: SectionTitle -->
+              <p class="section-title">재입고 알림 신청</p>
+              <p class="sheet-desc">알림받을 옵션을 선택해 주세요.</p>
+            </div>
+            <div class="sheet-body">
+              <!-- component: OptionSelectBox -->
+              <div class="optionbox" id="g-optbox">
+                <div class="opt-title" id="g-optToggle">
+                  <span>옵션을 선택해 주세요</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M5.5 8.25L11 13.75L16.5 8.25" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <div class="opt-list" id="g-optList">
+                  <div class="opt-item" data-opt="아이보리 / 500ml"><span>아이보리 / 500ml</span><span class="soldout">품절</span></div>
+                  <div class="opt-item" data-opt="딥그린 / 500ml"><span>딥그린 / 500ml</span><span class="soldout">품절</span></div>
+                  <div class="opt-item" data-opt="아이보리 / 350ml"><span>아이보리 / 350ml</span><span class="soldout">품절</span></div>
+                </div>
+              </div>
+              <!-- component: RemovableChip(variant=filled) -->
+              <div id="g-chips" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+              <!-- component: CheckboxInput -->
+              <div class="ds-checkbox" id="g-agree">
+                <span class="box"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15" fill="none"><path d="M11.6668 4L5.25016 10.4167L2.3335 7.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+                <span class="lbl">재입고 알림 수신에 동의합니다</span>
+              </div>
+              <!-- component: ListText -->
+              <p class="list-text" style="font-size:13px;">재입고 알림은 1회만 발송되고 발송 후 자동 종료돼요.</p>
+            </div>
+            <div class="sheet-buttons">
+              <!-- component: Button(size=xl, color=black) -->
+              <button class="btn s-xl c-black btn-full" id="g-submit" type="button" disabled>알림 신청하기</button>
+            </div>
+          </div>
+          </div><!-- /overlay-layer -->
+
+          <!-- component: Toast -->
+          <div class="app-toast top" id="g-toast"><span class="num-badge">9</span><!-- component: Toast --><div class="msg" id="g-toastMsg">재입고 알림을 신청했어요</div></div>
+
+        </div>
+      </div>
+      <p class="frame-caption">
+        하단 CTA 또는 안내 박스의 버튼을 누르면 신청 바텀시트가 열립니다 ·
+        <a href="#" id="g-togglePerm">OS 푸시 권한 꺼진 상태로 보기</a>
+      </p>
+    </div>
+
+    <div class="screen-desc">
+      <h4>디스크립션 — goods-sold-out (상품 상세 — 품절)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>헤더</strong> — 뒤로가기·장바구니. 실제 <code>/goods</code>는 페이지 전용 <code>GoodsHeader</code>(태깅 대상 아님)를 쓰므로, 이 화면 구현 시 새 헤더를 만들지 않고 <code>GoodsHeader</code>를 그대로 둔다. 공용 태깅은 동등 컴포넌트인 <code>Header</code> 기준으로 표기.<div class="tag-row"><span class="pair"><span class="tag">Header</span> <code>components-header--back-and-title</code></span><span class="pair"><span class="tag">BackSVG</span> <code>icons-each--back-svg</code></span><span class="pair"><span class="tag">ShoppingCartIconSVG</span> <code>icons-each--shopping-cart-icon-svg</code></span></div></div></li>
+        <li><span class="num">2</span><div><strong>상품 이미지</strong> — <code>ThumbnailSwiper</code> + <code>ShowIndex(type=GOODS)</code>. 품절이어도 이미지 슬라이드 동작은 그대로 유지한다(상품 판단에 필요한 정보이므로 가리지 않는다).<div class="tag-row"><span class="pair"><span class="tag">ThumbnailSwiper</span> <code>components-thumbnailswiper--multiple-images</code></span><span class="pair"><span class="tag">ShowIndex(type=GOODS)</span> <code>atoms-showindex--goods</code></span></div></div></li>
+        <li><span class="num proposed">3</span><div><strong>품절 딤 오버레이</strong> — 상품 상세에 처음 들어오자마자 품절 상태임을 알 수 있게 이미지 위에 딤과 문구를 얹는다. 현재 코드에서 품절 표시는 목록 카드에만 배지로 있고(<code>saleStatusColor.ts</code>의 배지 유틸은 <code>linkItemProduct</code>·<code>productItemBox</code>에서만 사용) 상세에는 하단 CTA 비활성화뿐이므로, 이 영역을 담당할 컴포넌트가 없다. <em>(신규 필요)</em><div class="tag-row"><span class="pair"><span class="tag new">신규 필요 — SoldOutOverlay</span></span></div></div></li>
+        <li><span class="num">4</span><div><strong>상품 기본 정보</strong> — 상태 배지 <code>Badge(variant=saleClosed)</code> + 브랜드·상품명·할인율·가격. 페이지 전용 <code>GoodsSection1</code>이 담당하는 영역이며 가격 표기 규칙(할인율 red_500 / 최종가 bold / 정가 취소선)은 그 컴포넌트 값을 그대로 옮겼다.<div class="tag-row"><span class="pair"><span class="tag">Badge(variant=saleClosed)</span> <code>atoms-badge--sale-closed</code></span><span class="pair"><span class="tag">ThinDivider</span> <code>atoms-dividers--thin</code></span></div></div></li>
+        <li><span class="num">5</span><div><strong>재입고 알림 유도 안내</strong> — <code>NoticeBox(variant=CTA)</code>. 제목·설명·둥근 버튼 구성이 이 컴포넌트의 CTA variant와 정확히 일치해 신규 제작 없이 그대로 쓴다. 버튼을 누르면 7번 CTA와 같은 신청 바텀시트가 열린다.<div class="tag-row"><span class="pair"><span class="tag">NoticeBox(variant=CTA)</span> <code>components-noticebox--cta</code></span></div></div></li>
+        <li><span class="num">6</span><div><strong>푸시 권한 꺼짐 안내(조건부)</strong> — OS 푸시 권한이 허용되지 않은 사용자에게만 노출. 같은 <code>NoticeBox(variant=CTA)</code>를 재사용하며, 버튼은 <code>/my-page/settings</code>가 이미 쓰는 Flutter 브릿지 앱 설정 이동 요청과 동일한 경로를 탄다. 프레임 아래 링크로 이 상태를 토글해 볼 수 있다.<div class="tag-row"><span class="pair"><span class="tag">NoticeBox(variant=CTA)</span> <code>components-noticebox--cta</code></span></div></div></li>
+        <li><span class="num">7</span><div><strong>하단 CTA</strong> — <code>Bottom</code> + <code>Button(size=2xl, color=black)</code>. 현행은 <code>ON_SALE</code>이 아니면 CTA를 <code>disabled</code>로 두고 텍스트만 “품절”로 바꾸는데(<code>goodsBottom.tsx:79-105</code>), <code>OUT_OF_STOCK</code>에 한해 활성 “재입고 알림 받기”로 바꾼다. 신청을 마치면 <code>Button(size=2xl, color=greyOutLine)</code> “재입고 알림 신청 완료”로 전환되고 다시 누르면 해제 확인을 띄운다. <code>SALE_ENDED</code>·<code>SALE_SUSPENDED</code>는 현행 비활성 동작을 유지한다.<div class="tag-row"><span class="pair"><span class="tag">Bottom</span> <code>components-bottom--single-button</code></span><span class="pair"><span class="tag">Button(size=2xl, color=black)</span> <code>atoms-button--size-2-xl</code></span><span class="pair"><span class="tag">Button(size=2xl, color=greyOutLine)</span> <code>atoms-button--size-2-xl</code></span></div></div></li>
+        <li><span class="num">8</span><div><strong>알림 신청 바텀시트</strong> — <code>Backdrop</code> + <code>InfoConfirmSheet(align=stretch)</code> 골격 위에 <code>SectionTitle</code>, <code>OptionSelectBox</code>, 선택 결과 <code>RemovableChip(variant=filled)</code>, <code>CheckboxInput</code>, <code>ListText</code>, <code>Button(size=xl, color=black)</code>. 옵션 미선택 또는 동의 미체크면 신청 버튼이 비활성이다. 자세한 상태는 화면 2 참조.<div class="tag-row"><span class="pair"><span class="tag">Backdrop</span> <code>atoms-backdrop--default</code></span><span class="pair"><span class="tag">InfoConfirmSheet(align=stretch)</span> <code>popups-infoconfirmsheet--default</code></span><span class="pair"><span class="tag">SectionTitle</span> <code>atoms-sectiontitle--default</code></span><span class="pair"><span class="tag">OptionSelectBox</span> <code>atoms-optionselectbox--default</code></span><span class="pair"><span class="tag">RemovableChip(variant=filled)</span> <code>atoms-removablechip--filled</code></span><span class="pair"><span class="tag">CheckboxInput</span> <code>atoms-checkboxinput--default</code></span><span class="pair"><span class="tag">ListText</span> <code>atoms-listtext--default</code></span><span class="pair"><span class="tag">Button(size=xl, color=black)</span> <code>atoms-button--default</code></span></div></div></li>
+        <li><span class="num">9</span><div><strong>결과 안내</strong> — <code>Toast</code>. 신청·해제 결과를 상단 토스트로 알린다(<code>Toast</code>의 success 계열은 <code>top:54px</code> 고정).<div class="tag-row"><span class="pair"><span class="tag">Toast</span> <code>components-toast--default</code></span></div></div></li>
+      </ol>
+      <p class="new-component-note">
+        <strong>디자인 시스템 미보유:</strong>
+        <span class="proposed-name">SoldOutOverlay</span> — 3번 영역(상품 이미지 위 품절 딤). 공용 269종·페이지 전용 263종 <strong>어디에도 대응 항목이 없어</strong> 진짜 신규 제작 대상이다. 근거: 판매 상태 시각 표기 자산인 <code>Badge(variant=saleClosed)</code>는 인라인 배지이고, 상태색 유틸(<code>saleStatusColor.ts</code>)은 목록 카드 두 곳에서만 쓰이며, 썸네일 위 오버레이는 <code>ProductBox</code>의 <code>PurchasableBadge</code>(<code>rgba(0,0,0,.5)</code> 작은 배지)뿐이라 전면 딤 + 안내 문구 조합이 없다.
+        나머지(<code>Header</code>, <code>ThumbnailSwiper</code>, <code>ShowIndex</code>, <code>Badge</code>, <code>NoticeBox</code>, <code>Bottom</code>, <code>Button</code>, <code>Backdrop</code>, <code>InfoConfirmSheet</code>, <code>OptionSelectBox</code>, <code>RemovableChip</code>, <code>CheckboxInput</code>, <code>ListText</code>, <code>Toast</code>)는 기존 <code>design-system/app</code> 공용 컴포넌트로 구성한다. 페이지 전용 <code>GoodsHeader</code>·<code>GoodsSection1</code>·<code>GoodsBottom</code>은 태깅 대상이 아니며 <strong>이 화면의 수정 대상</strong>이다.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       화면 2 : restock-alert-apply-sheet
+       ================================================================ -->
+  <section class="screen-block" id="screen-sheet">
+    <div class="screen-title">
+      <span class="screen-num">화면 2</span>
+      <h3>restock-alert-apply-sheet <span class="kr">(재입고 알림 신청 바텀시트)</span></h3>
+      <span class="badge-doc">story-restock-alert-apply / push-permission</span>
+    </div>
+
+    <div class="screen-mock two-up">
+
+      <!-- 2-A: 옵션 펼침 · 선택 전 -->
+      <div>
+        <div class="phone">
+          <div class="phone-screen">
+            <div style="height:120px; background:var(--g100); border-radius:19px 19px 0 0; display:flex; align-items:center; justify-content:center; color:var(--g400); font-size:13px;">상품 상세 (뒤 화면)</div>
+            <!-- component: Backdrop -->
+            <div class="app-backdrop open" style="border-radius:19px;"></div>
+            <!-- component: InfoConfirmSheet(align=stretch) -->
+            <div class="app-sheet open" style="position:relative; transform:none; border-radius:16px 16px 19px 19px; z-index:31;">
+
+              <!-- 1. 시트 헤더 -->
+              <div class="num-region">
+                <span class="num-badge">1</span>
+                <div class="sheet-textblock">
+                  <!-- component: Backdrop -->
+                  <!-- component: InfoConfirmSheet(align=stretch) -->
+                  <!-- component: SectionTitle -->
+                  <!-- component: SectionTitle -->
+                  <p class="section-title">재입고 알림 신청</p>
+                  <p class="sheet-desc">알림받을 옵션을 선택해 주세요.</p>
+                </div>
+              </div>
+
+              <!-- 2. 상품 요약 행 -->
+              <div class="num-region">
+                <span class="num-badge shared-needed">2</span>
+                <!-- 공용화 필요 — my-page / PastHistoryGoodsItem -->
+                <div class="sheet-body">
+                  <!-- 공용화 필요 — my-page / PastHistoryGoodsItem (app/my-page/order-history/_shared/components/pastHistoryGoodsItem/pastHistoryGoodsItem.tsx) — 태깅 대상 아님 -->
+                  <div class="prow shared-needed-region" style="padding:10px;">
+                    <div class="thumb85" style="width:60px; height:60px; font-size:11px; color:var(--g400);">이미지</div>
+                    <div class="info" style="justify-content:center; gap:4px;">
+                      <p class="gname" style="margin:0;">데일리 스텐 텀블러 500ml (2color)</p>
+                      <p class="gprice" style="margin:0; font-size:14px; line-height:20px;">17,900원</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 3. 옵션 선택 -->
+              <div class="num-region">
+                <span class="num-badge">3</span>
+                <!-- component: OptionSelectBox -->
+                <div class="sheet-body">
+                  <!-- component: OptionSelectBox -->
+                  <div class="optionbox open">
+                    <div class="opt-title">
+                      <span>옵션을 선택해 주세요</span>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22" fill="none" style="transform:rotate(180deg);"><path d="M5.5 8.25L11 13.75L16.5 8.25" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </div>
+                    <div class="opt-list" style="max-height:240px;">
+                      <div class="opt-item"><span>아이보리 / 500ml</span><span class="soldout">품절</span></div>
+                      <div class="opt-item"><span>딥그린 / 500ml</span><span class="soldout">품절</span></div>
+                      <div class="opt-item" style="color:var(--g400);"><span>아이보리 / 350ml</span><span class="soldout">판매 종료</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4. 동의 + 안내 -->
+              <div class="num-region">
+                <span class="num-badge">4</span>
+                <!-- component: CheckboxInput -->
+                <!-- component: ListText -->
+                <div class="sheet-body">
+                  <!-- component: CheckboxInput -->
+                  <div class="ds-checkbox">
+                    <span class="box"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15" fill="none"><path d="M11.6668 4L5.25016 10.4167L2.3335 7.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+                    <span class="lbl">재입고 알림 수신에 동의합니다</span>
+                  </div>
+                  <!-- component: ListText -->
+                  <p class="list-text" style="font-size:13px;">재입고 알림은 1회만 발송되고 발송 후 자동 종료돼요.</p>
+                </div>
+              </div>
+
+              <!-- 5. 신청 버튼(비활성) -->
+              <div class="num-region" style="margin-top:0;">
+                <span class="num-badge">5</span>
+                <!-- component: Button(size=xl, color=black) -->
+                <div class="sheet-buttons">
+                  <!-- component: Button(size=xl, color=black) -->
+                  <button class="btn s-xl c-black btn-full" type="button" disabled>알림 신청하기</button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+        <p class="frame-caption">2-A · 옵션 펼침 / 선택 전 — 신청 버튼 비활성</p>
+      </div>
+
+      <!-- 2-B: 선택 완료 · 신청 가능 -->
+      <div>
+        <div class="phone">
+          <div class="phone-screen">
+            <div style="height:120px; background:var(--g100); border-radius:19px 19px 0 0; display:flex; align-items:center; justify-content:center; color:var(--g400); font-size:13px;">상품 상세 (뒤 화면)</div>
+            <div class="app-backdrop open" style="border-radius:19px;"></div>
+            <div class="app-sheet open" style="position:relative; transform:none; border-radius:16px 16px 19px 19px; z-index:31;">
+
+              <div class="sheet-textblock">
+                <p class="section-title">재입고 알림 신청</p>
+                <p class="sheet-desc">알림받을 옵션을 선택해 주세요.</p>
+              </div>
+
+              <div class="sheet-body">
+                <div class="prow shared-needed-region" style="padding:10px;">
+                  <div class="thumb85" style="width:60px; height:60px; font-size:11px; color:var(--g400);">이미지</div>
+                  <div class="info" style="justify-content:center; gap:4px;">
+                    <p class="gname" style="margin:0;">데일리 스텐 텀블러 500ml (2color)</p>
+                    <p class="gprice" style="margin:0; font-size:14px; line-height:20px;">17,900원</p>
+                  </div>
+                </div>
+
+                <div class="optionbox">
+                  <div class="opt-title">
+                    <span>옵션 2개 선택</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M5.5 8.25L11 13.75L16.5 8.25" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </div>
+                </div>
+
+                <!-- 6. 선택 결과 칩 -->
+                <div class="num-region" style="margin-top:2px;">
+                  <span class="num-badge inset">6</span>
+                  <!-- component: RemovableChip(variant=filled) -->
+                  <!-- component: RemovableChip(variant=filled) -->
+                  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <span class="chip filled">아이보리 / 500ml
+                      <button class="x" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M15 5L5 15M5 5L15 15" stroke="#D1D1D6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+                    </span>
+                    <span class="chip filled">딥그린 / 500ml
+                      <button class="x" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M15 5L5 15M5 5L15 15" stroke="#D1D1D6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="ds-checkbox on">
+                  <span class="box"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15" fill="none"><path d="M11.6668 4L5.25016 10.4167L2.3335 7.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+                  <span class="lbl">재입고 알림 수신에 동의합니다</span>
+                </div>
+                <p class="list-text" style="font-size:13px;">재입고 알림은 1회만 발송되고 발송 후 자동 종료돼요.</p>
+              </div>
+
+              <!-- 7. 신청 버튼(활성) -->
+              <div class="num-region" style="margin-top:0;">
+                <span class="num-badge">7</span>
+                <!-- component: Button(size=xl, color=black) -->
+                <div class="sheet-buttons">
+                  <button class="btn s-xl c-black btn-full" type="button">알림 신청하기</button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+        <p class="frame-caption">2-B · 옵션 2개 선택 + 동의 완료 — 신청 버튼 활성</p>
+      </div>
+
+    </div>
+
+    <div class="screen-desc">
+      <h4>디스크립션 — restock-alert-apply-sheet (재입고 알림 신청 바텀시트)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>시트 제목·안내</strong> — <code>InfoConfirmSheet(align=stretch)</code>의 텍스트 블록. 제목은 <code>SectionTitle</code>을 그대로 재사용하는 이 컴포넌트의 구조를 따르고, <code>align=stretch</code>이므로 좌측 정렬된다(<code>align=center</code>는 짧은 문구용).<div class="tag-row"><span class="pair"><span class="tag">Backdrop</span> <code>atoms-backdrop--default</code></span><span class="pair"><span class="tag">InfoConfirmSheet(align=stretch)</span> <code>popups-infoconfirmsheet--default</code></span><span class="pair"><span class="tag">SectionTitle</span> <code>atoms-sectiontitle--default</code></span></div></div></li>
+        <li><span class="num shared-needed">2</span><div><strong>상품 요약 행</strong> — 어떤 상품에 알림을 거는지 확인시키는 가로 행(썸네일 + 상품명 + 가격). 동일한 레이아웃이 <code>my-page/order-history</code>의 페이지 전용 <code>PastHistoryGoodsItem</code>에 이미 있으나 페이지 전용이라 다른 화면에서 import할 수 없다 → <em>공용화 필요</em>. 새로 만들지 않는다.<div class="tag-row"><span class="pair"><span class="tag shared">공용화 필요 — my-page / PastHistoryGoodsItem</span> <code>app/my-page/order-history/_shared/components/pastHistoryGoodsItem/pastHistoryGoodsItem.tsx</code></span></div></div></li>
+        <li><span class="num">3</span><div><strong>옵션 선택</strong> — <code>OptionSelectBox</code>. 접힘/펼침 아코디언과 품절 표기를 이미 지원하는 컴포넌트다(<code>atoms-optionselectbox--with-adding-price-and-out-of-stock</code> 스토리 존재). 여기서는 <strong>품절 옵션만 선택 가능</strong>하고 <code>SALE_ENDED</code> 옵션은 회색 처리해 선택 대상에서 제외한다. 옵션이 없는 단일 상품이면 이 영역을 생략하고 상품 단위로 신청한다.<div class="tag-row"><span class="pair"><span class="tag">OptionSelectBox</span> <code>atoms-optionselectbox--default</code></span></div></div></li>
+        <li><span class="num">4</span><div><strong>수신 동의 · 정책 안내</strong> — <code>CheckboxInput</code> + <code>ListText</code>. “1회 발송 후 자동 종료”라는 발송 정책을 신청 시점에 명시해 재알림 기대를 만들지 않는다.<div class="tag-row"><span class="pair"><span class="tag">CheckboxInput</span> <code>atoms-checkboxinput--default</code></span><span class="pair"><span class="tag">ListText</span> <code>atoms-listtext--default</code></span></div></div></li>
+        <li><span class="num">5</span><div><strong>신청 버튼 — 비활성</strong> — 옵션 미선택 또는 동의 미체크 상태. <code>Button(size=xl, color=black)</code>의 disabled 스타일(bg <code>gray_neutral_100</code> / 텍스트 <code>gray_neutral_400</code>)이 그대로 적용된다.<div class="tag-row"><span class="pair"><span class="tag">Button(size=xl, color=black)</span> <code>atoms-button--default</code></span></div></div></li>
+        <li><span class="num">6</span><div><strong>선택 결과 칩</strong> — <code>RemovableChip(variant=filled)</code>. 다중 선택한 옵션을 칩으로 나열하고 × 로 개별 해제한다. 옵션 박스는 다시 접혀 선택 개수를 요약해 보여준다.<div class="tag-row"><span class="pair"><span class="tag">RemovableChip(variant=filled)</span> <code>atoms-removablechip--filled</code></span></div></div></li>
+        <li><span class="num">7</span><div><strong>신청 버튼 — 활성</strong> — 누르면 시트가 닫히고 화면 1의 하단 CTA가 “재입고 알림 신청 완료”로 바뀌며 결과 <code>Toast</code>가 뜬다. OS 푸시 권한이 꺼져 있으면 이 시점에 화면 1의 6번 안내가 함께 노출된다.<div class="tag-row"><span class="pair"><span class="tag">Button(size=xl, color=black)</span> <code>atoms-button--default</code></span></div></div></li>
+      </ol>
+      <p class="new-component-note">
+        <strong>디자인 시스템 미보유:</strong> 없음 — 이 화면의 모든 요소가 기존 컴포넌트로 덮인다. 다만 <span class="shared-name">공용화 필요 — my-page / PastHistoryGoodsItem</span> (<code>app/my-page/order-history/_shared/components/pastHistoryGoodsItem/pastHistoryGoodsItem.tsx</code>): 2번 영역의 가로 상품 행이 페이지 전용으로 묶여 있어 이 시트와 화면 3에서 재사용할 수 없다. 공용 승격 작업이 선행돼야 하며, 2단계 개발 지시는 “새로 만들기”가 아니라 <strong>이 컴포넌트를 승격해 재사용</strong>이다.
+        <code>ProductBox</code>(정사각 썸네일 2열 그리드 카드, <code>max-width 240px</code>)·<code>SaleProductBox</code>(셀러 수익 표기 전제)·<code>OrderProductBox</code>(주문 <code>type</code> 9종 전제)는 모두 이 자리의 단순 가로 행으로 쓸 수 없어 대체 후보가 아니다.
+        그 외 사용 컴포넌트: <code>Backdrop</code>, <code>InfoConfirmSheet(align=stretch)</code>, <code>SectionTitle</code>, <code>OptionSelectBox</code>, <code>RemovableChip(variant=filled)</code>, <code>CheckboxInput</code>, <code>ListText</code>, <code>Button(size=xl, color=black)</code>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       화면 3 : restock-alert-list
+       ================================================================ -->
+  <section class="screen-block" id="screen-list">
+    <div class="screen-title">
+      <span class="screen-num">화면 3</span>
+      <h3>restock-alert-list <span class="kr">(재입고 알림 내역)</span></h3>
+      <span class="badge-doc">story-restock-alert-manage / receive</span>
+    </div>
+
+    <div class="screen-mock">
+      <div class="phone">
+        <div class="phone-screen">
+
+          <!-- 1. Header -->
+          <div class="num-region">
+            <span class="num-badge">1</span>
+            <!-- component: Header -->
+            <!-- component: BackSVG -->
+            <!-- component: SettingIconSVG -->
+            <!-- component: ThinDivider -->
+            <div class="app-header">
+              <div class="h-left">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 18L9 12L15 6" stroke="#111927" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <span class="h-title">재입고 알림</span>
+              <div class="h-right">
+                <!-- component: SettingIconSVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 17 17" fill="none"><path d="M8.50033 10.6243C9.67393 10.6243 10.6253 9.67295 10.6253 8.49935C10.6253 7.32574 9.67393 6.37435 8.50033 6.37435C7.32672 6.37435 6.37533 7.32574 6.37533 8.49935C6.37533 9.67295 7.32672 10.6243 8.50033 10.6243Z" stroke="#384250" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.2655 10.4312C13.1798 10.6254 13.1542 10.8408 13.1921 11.0497C13.2299 11.2586 13.3295 11.4514 13.478 11.6031L13.5166 11.6418C13.6364 11.7614 13.7313 11.9034 13.7962 12.0598C13.861 12.2161 13.8943 12.3837 13.8943 12.5529C13.8943 12.7222 13.861 12.8898 13.7962 13.0461C13.7313 13.2025 13.6364 13.3445 13.5166 13.4641C13.397 13.5839 13.255 13.6789 13.0986 13.7437C12.9423 13.8085 12.7747 13.8418 12.6054 13.8418C12.4362 13.8418 12.2686 13.8085 12.1123 13.7437C11.9559 13.6789 11.8139 13.5839 11.6943 13.4641L11.6556 13.4255C11.5039 13.277 11.3111 13.1774 11.1022 13.1396C10.8933 13.1017 10.6779 13.1273 10.4837 13.213C10.2932 13.2946 10.1308 13.4302 10.0164 13.6029C9.90194 13.7757 9.84055 13.9781 9.83972 14.1853V14.2948C9.83972 14.6364 9.70403 14.9639 9.46251 15.2055C9.22098 15.447 8.89341 15.5827 8.55184 15.5827C8.21027 15.5827 7.8827 15.447 7.64117 15.2055C7.39965 14.9639 7.26396 14.6364 7.26396 14.2948V14.2368C7.25898 14.0237 7.18999 13.817 7.06596 13.6436C6.94193 13.4702 6.7686 13.3381 6.56851 13.2645C6.37428 13.1788 6.15884 13.1532 5.94995 13.1911C5.74106 13.229 5.5483 13.3285 5.39654 13.477L5.3579 13.5156C5.23829 13.6354 5.09625 13.7304 4.93991 13.7952C4.78356 13.86 4.61597 13.8934 4.44673 13.8934C4.27748 13.8934 4.10989 13.86 3.95355 13.7952C3.7972 13.7304 3.65516 13.6354 3.53555 13.5156C3.41581 13.396 3.32082 13.254 3.25601 13.0976C3.19119 12.9413 3.15784 12.7737 3.15784 12.6045C3.15784 12.4352 3.19119 12.2676 3.25601 12.1113C3.32082 11.9549 3.41581 11.8129 3.53555 11.6933L3.57419 11.6547C3.72264 11.5029 3.82223 11.3101 3.8601 11.1012C3.89798 10.8924 3.87241 10.6769 3.78669 10.4827C3.70506 10.2922 3.56952 10.1298 3.39676 10.0154C3.224 9.90097 3.02155 9.83957 2.81434 9.83874H2.70487C2.3633 9.83874 2.03573 9.70306 1.7942 9.46153C1.55268 9.22001 1.41699 8.89243 1.41699 8.55086C1.41699 8.2093 1.55268 7.88172 1.7942 7.6402C2.03573 7.39867 2.3633 7.26298 2.70487 7.26298H2.76283C2.97597 7.258 3.18268 7.18901 3.35609 7.06498C3.5295 6.94095 3.66158 6.76763 3.73517 6.56753C3.82089 6.37331 3.84646 6.15786 3.80859 5.94897C3.77071 5.74008 3.67113 5.54732 3.52267 5.39556L3.48404 5.35692C3.3643 5.23732 3.2693 5.09528 3.20449 4.93893C3.13968 4.78259 3.10632 4.615 3.10632 4.44575C3.10632 4.2765 3.13968 4.10892 3.20449 3.95257C3.2693 3.79622 3.3643 3.65419 3.48404 3.53458C3.60365 3.41483 3.74569 3.31984 3.90203 3.25503C4.05838 3.19022 4.22596 3.15686 4.39521 3.15686C4.56446 3.15686 4.73205 3.19022 4.88839 3.25503C5.04474 3.31984 5.18678 3.41483 5.30639 3.53458L5.34502 3.57321C5.49679 3.72166 5.68954 3.82125 5.89843 3.85912C6.10732 3.897 6.32277 3.87143 6.51699 3.78571H6.56851C6.75896 3.70408 6.9214 3.56855 7.03581 3.39578C7.15022 3.22302 7.21162 3.02058 7.21245 2.81336V2.70389C7.21245 2.36233 7.34813 2.03475 7.58966 1.79323C7.83118 1.5517 8.15876 1.41602 8.50033 1.41602C8.84189 1.41602 9.16947 1.5517 9.41099 1.79323C9.65252 2.03475 9.7882 2.36233 9.7882 2.70389V2.76185C9.78903 2.96906 9.85043 3.17151 9.96484 3.34427C10.0793 3.51703 10.2417 3.65257 10.4321 3.7342C10.6264 3.81992 10.8418 3.84549 11.0507 3.80761C11.2596 3.76973 11.4524 3.67015 11.6041 3.5217L11.6427 3.48306C11.7624 3.36332 11.9044 3.26833 12.0607 3.20351C12.2171 3.1387 12.3847 3.10534 12.5539 3.10534C12.7232 3.10534 12.8908 3.1387 13.0471 3.20351C13.2035 3.26833 13.3455 3.36332 13.4651 3.48306C13.5848 3.60267 13.6798 3.74471 13.7446 3.90105C13.8095 4.0574 13.8428 4.22499 13.8428 4.39424C13.8428 4.56348 13.8095 4.73107 13.7446 4.88742C13.6798 5.04376 13.5848 5.1858 13.4651 5.30541L13.4265 5.34405C13.278 5.49581 13.1784 5.68856 13.1405 5.89745C13.1027 6.10635 13.1282 6.32179 13.214 6.51602V6.56753C13.2956 6.75799 13.4311 6.92042 13.6039 7.03483C13.7767 7.14925 13.9791 7.21064 14.1863 7.21147H14.2958C14.6373 7.21147 14.9649 7.34716 15.2064 7.58868C15.448 7.83021 15.5837 8.15778 15.5837 8.49935C15.5837 8.84092 15.448 9.16849 15.2064 9.41002C14.9649 9.65154 14.6373 9.78723 14.2958 9.78723H14.2378C14.0306 9.78805 13.8282 9.84945 13.6554 9.96387C13.4826 10.0783 13.3471 10.2407 13.2655 10.4312Z" stroke="#384250" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- component: ThinDivider -->
+          <hr class="thin-divider" />
+
+          <!-- 2. 건수 + 전체 해제 -->
+          <div class="num-region">
+            <span class="num-badge">2</span>
+            <!-- component: ListText -->
+            <!-- component: Button(size=xs, color=greyOutLine) -->
+            <div class="info-row" style="padding:14px 20px;">
+              <!-- component: ListText -->
+              <p class="list-text" id="l-count">전체 3건</p>
+              <!-- component: Button(size=xs, color=greyOutLine) -->
+              <button class="btn s-xs c-greyOutLine" id="l-clearAll" type="button">전체 해제</button>
+            </div>
+          </div>
+
+          <!-- component: ThinDivider -->
+          <hr class="thin-divider" />
+
+          <!-- 3. 목록 -->
+          <div class="num-region">
+            <span class="num-badge shared-needed">3</span>
+            <!-- 공용화 필요 — my-page / PastHistoryGoodsItem (app/my-page/order-history/_shared/components/pastHistoryGoodsItem/pastHistoryGoodsItem.tsx) -->
+            <!-- component: Badge(variant=saleClosed) -->
+            <!-- component: Badge(variant=onSale) -->
+            <!-- component: Button(size=xs, color=greyOutLine) -->
+            <!-- 공용화 필요 — my-page / PastHistoryGoodsItem -->
+            <div class="list-wrap shared-needed-region" id="l-list"></div>
+          </div>
+
+          <!-- 5. 빈 상태 -->
+          <div class="num-region hidden" id="l-empty">
+            <span class="num-badge">5</span>
+            <!-- component: EmptyState -->
+            <!-- component: NoDataSVG -->
+            <!-- component: Button(size=md, color=black) -->
+            <div class="emptystate">
+              <!-- component: NoDataSVG -->
+              <svg xmlns="http://www.w3.org/2000/svg" width="51" height="50" viewBox="0 0 51 50" fill="none"><path d="M42.1666 19.7917V14.1667C42.1666 10.6664 42.1666 8.91626 41.4854 7.57931C40.8862 6.40329 39.93 5.44717 38.754 4.84796C37.4171 4.16675 35.6669 4.16675 32.1666 4.16675H18.8333C15.3329 4.16675 13.5828 4.16675 12.2458 4.84796C11.0698 5.44717 10.1137 6.40329 9.51446 7.57931C8.83325 8.91626 8.83325 10.6664 8.83325 14.1667V35.8334C8.83325 39.3337 8.83325 41.0839 9.51446 42.4209C10.1137 43.5969 11.0698 44.553 12.2458 45.1522C13.5828 45.8334 15.3329 45.8334 18.8333 45.8334H29.6666M29.6666 22.9167H17.1666M21.3333 31.2501H17.1666M33.8333 14.5834H17.1666M34.8749 31.2547C35.242 30.2112 35.9665 29.3313 36.9202 28.7709C37.8739 28.2104 38.9951 28.0055 40.0854 28.1925C41.1756 28.3795 42.1645 28.9463 42.8769 29.7926C43.5893 30.6388 43.9792 31.7099 43.9775 32.8161C43.9775 35.9387 39.2935 37.5001 39.2935 37.5001M39.3539 43.7501H39.3747" stroke="#D2D6DB" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              <p class="es-text" style="margin:0;">신청한 재입고 알림이 없어요.<br />품절된 상품에서 알림을 신청해 보세요.</p>
+              <!-- component: Button(size=md, color=black) -->
+              <button class="btn s-md c-black" type="button">상품 둘러보기</button>
+            </div>
+          </div>
+
+          <!-- 4. 푸시 수신 -->
+          <div class="app-toast push top" id="l-push" style="top:14px;">
+            <span class="num-badge">4</span>
+            <!-- component: Toast -->
+            <!-- component: BellIconSVG -->
+            <div class="msg">
+              <!-- component: BellIconSVG -->
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18" fill="none" style="flex-shrink:0; margin-top:2px;"><path d="M13.5194 6.22227C13.5194 5.00539 13.0432 3.83836 12.1957 2.9779C11.3481 2.11744 10.1986 1.63403 9 1.63403C7.80139 1.63403 6.65187 2.11744 5.80433 2.9779C4.95679 3.83836 4.48064 5.00539 4.48064 6.22227C4.48064 8.23562 4.05441 9.70808 3.52258 10.7617C2.91644 11.9625 2.61337 12.5629 2.62534 12.7064C2.63903 12.8705 2.66425 12.9222 2.77785 13.0196C2.87715 13.1046 3.37604 13.1046 4.37382 13.1046H13.6262C14.624 13.1046 15.1229 13.1046 15.2221 13.0196C15.3358 12.9222 15.361 12.8705 15.3747 12.7064C15.3866 12.5629 15.0836 11.9625 14.4774 10.7617C13.9456 9.70808 13.5194 8.23562 13.5194 6.22227Z" stroke="#FEC84B" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.5194 6.22227C13.5194 5.00539 13.0432 3.83836 12.1957 2.9779C11.3481 2.11744 10.1986 1.63403 9 1.63403C7.80139 1.63403 6.65187 2.11744 5.80433 2.9779C4.95679 3.83836 4.48064 5.00539 4.48064 6.22227C4.48064 8.23562 4.05441 9.70808 3.52258 10.7617C2.91644 11.9625 2.61337 12.5629 2.62534 12.7064C2.63903 12.8705 2.66425 12.9222 2.77785 13.0196C2.87715 13.1046 3.37604 13.1046 4.37382 13.1046H13.6262C14.624 13.1046 15.1229 13.1046 15.2221 13.0196C15.3358 12.9222 15.361 12.8705 15.3747 12.7064C15.3866 12.5629 15.0836 11.9625 14.4774 10.7617C13.9456 9.70808 13.5194 8.23562 13.5194 6.22227Z" fill="#FEC84B"></path><rect x="6.26807" y="14.8694" width="5.46429" height="1.76471" rx="0.882353" fill="#FEC84B"></rect></svg>
+              <div>
+                <p class="p-title" style="margin:0;">기다리던 상품이 재입고됐어요</p>
+                <p class="p-desc" style="margin:0;">데일리 스텐 텀블러 500ml · 아이보리 / 500ml</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- component: Toast -->
+          <div class="app-toast bottom" id="l-toast"><span class="num-badge">6</span><!-- component: Toast --><div class="msg" id="l-toastMsg">재입고 알림을 해제했어요</div></div>
+
+        </div>
+      </div>
+      <p class="frame-caption">
+        각 행의 “알림 해제”를 누르면 목록에서 제거되고, 0건이 되면 빈 상태로 전환됩니다 ·
+        <a href="#" id="l-showPush">재입고 푸시 수신 모습 보기</a> ·
+        <a href="#" id="l-reset">목록 초기화</a>
+      </p>
+    </div>
+
+    <div class="screen-desc">
+      <h4>디스크립션 — restock-alert-list (재입고 알림 내역)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>헤더</strong> — <code>Header</code>. 마이페이지 하위 상세 화면이므로 뒤로가기 + 타이틀 구성이며, 우측 <code>SettingIconSVG</code>는 화면 4(알림 설정)로 이동한다. 진입 경로는 마이페이지 <code>shopping</code> 섹션(현재 <code>order-history</code>·<code>likes</code>가 있는 그룹)에 메뉴 한 줄을 추가한다.<div class="tag-row"><span class="pair"><span class="tag">Header</span> <code>components-header--back-and-title</code></span><span class="pair"><span class="tag">BackSVG</span> <code>icons-each--back-svg</code></span><span class="pair"><span class="tag">SettingIconSVG</span> <code>icons-each--setting-icon-svg</code></span><span class="pair"><span class="tag">ThinDivider</span> <code>atoms-dividers--thin</code></span></div></div></li>
+        <li><span class="num">2</span><div><strong>건수 · 전체 해제</strong> — <code>ListText</code>(<code>label1.medium</code> / <code>gray_neutral_500</code>) + <code>Button(size=xs, color=greyOutLine)</code>. 신청 건이 0건이면 이 줄을 감춘다.<div class="tag-row"><span class="pair"><span class="tag">ListText</span> <code>atoms-listtext--default</code></span><span class="pair"><span class="tag">Button(size=xs, color=greyOutLine)</span> <code>atoms-button--default</code></span></div></div></li>
+        <li><span class="num shared-needed">3</span><div><strong>알림 신청 목록</strong> — 행마다 썸네일·상품명·옵션명·신청일과 상태 배지, 해제 버튼. 화면 2의 2번과 같은 가로 행이 필요하며 대상은 페이지 전용 <code>PastHistoryGoodsItem</code>이다 → <em>공용화 필요</em>. 상태 배지는 알림 대기 <code>Badge(variant=saleClosed)</code>, 재입고 완료 <code>Badge(variant=onSale)</code>. 신청일 최신순 정렬.<div class="tag-row"><span class="pair"><span class="tag shared">공용화 필요 — my-page / PastHistoryGoodsItem</span> <code>app/my-page/order-history/_shared/components/pastHistoryGoodsItem/pastHistoryGoodsItem.tsx</code></span><span class="pair"><span class="tag">Badge(variant=saleClosed)</span> <code>atoms-badge--sale-closed</code></span><span class="pair"><span class="tag">Badge(variant=onSale)</span> <code>atoms-badge--on-sale</code></span><span class="pair"><span class="tag">Button(size=xs, color=greyOutLine)</span> <code>atoms-button--default</code></span></div></div></li>
+        <li><span class="num">4</span><div><strong>재입고 푸시 수신</strong> — <code>Toast</code>의 push 타입(흰 배경 <code>#fff</code> / <code>border-radius 8px</code> / <code>box-shadow 0 4px 8px 3px rgba(0,0,0,.15)</code> / 제목 <code>label1.medium</code> + 설명 <code>label2.regular</code>)과 <code>BellIconSVG</code>. 실제 발송은 Flutter 브릿지 앱 푸시이고 이 목업은 수신 시 문안·정보 구성을 보여준다. 누르면 딥링크로 해당 상품 상세로 진입하고, 그 구독 건은 “재입고 완료”로 전환되어 다시 발송되지 않는다.<div class="tag-row"><span class="pair"><span class="tag">Toast</span> <code>components-toast--default</code></span><span class="pair"><span class="tag">BellIconSVG</span> <code>icons-each--bell-icon-svg</code></span></div></div></li>
+        <li><span class="num">5</span><div><strong>빈 상태</strong> — <code>EmptyState</code> 셸(column·center·<code>gap 24px</code>) + <code>NoDataSVG</code> + <code>Button(size=md, color=black)</code>. <code>EmptyState</code>는 레이아웃만 소유하고 아이콘·텍스트·액션은 호출부가 주입하는 구조이므로 문구 타이포는 이 화면이 정한다.<div class="tag-row"><span class="pair"><span class="tag">EmptyState</span> <code>components-emptystate--icon-and-text</code></span><span class="pair"><span class="tag">NoDataSVG</span> <code>icons-each--no-data-svg</code></span><span class="pair"><span class="tag">Button(size=md, color=black)</span> <code>atoms-button--default</code></span></div></div></li>
+        <li><span class="num">6</span><div><strong>해제 결과 안내</strong> — <code>Toast</code>. 개별/전체 해제 결과를 하단 토스트로 알린다.<div class="tag-row"><span class="pair"><span class="tag">Toast</span> <code>components-toast--default</code></span></div></div></li>
+      </ol>
+      <p class="new-component-note">
+        <strong>디자인 시스템 미보유:</strong> 없음 — 이 화면의 모든 요소가 기존 컴포넌트로 덮인다. <span class="shared-name">공용화 필요 — my-page / PastHistoryGoodsItem</span> (<code>app/my-page/order-history/_shared/components/pastHistoryGoodsItem/pastHistoryGoodsItem.tsx</code>) — 3번 영역의 가로 상품 행, 화면 2와 공유. 화면 2와 같은 근거로 <code>ProductBox</code>·<code>SaleProductBox</code>·<code>OrderProductBox</code>는 대체 후보가 아니다.
+        그 외 사용 컴포넌트: <code>Header</code>, <code>ThinDivider</code>, <code>ListText</code>, <code>Button(size=xs, color=greyOutLine)</code>, <code>Button(size=md, color=black)</code>, <code>Badge(variant=saleClosed)</code>, <code>Badge(variant=onSale)</code>, <code>EmptyState</code>, <code>Toast</code>, 아이콘 <code>BackSVG</code>·<code>SettingIconSVG</code>·<code>NoDataSVG</code>·<code>BellIconSVG</code>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       화면 4 : my-page-settings-restock
+       ================================================================ -->
+  <section class="screen-block" id="screen-setting">
+    <div class="screen-title">
+      <span class="screen-num">화면 4</span>
+      <h3>my-page-settings-restock <span class="kr">(설정 — 재입고 알림 수신)</span></h3>
+      <span class="badge-doc">story-restock-alert-receive-setting / push-permission</span>
+    </div>
+
+    <div class="screen-mock">
+      <div class="phone">
+        <div class="phone-screen">
+
+          <!-- 1. Header -->
+          <div class="num-region">
+            <span class="num-badge">1</span>
+            <!-- component: Header -->
+            <!-- component: BackSVG -->
+            <div class="app-header">
+              <div class="h-left">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 18L9 12L15 6" stroke="#111927" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <span class="h-title">설정</span>
+            </div>
+          </div>
+
+          <!-- 2. 푸시 권한 안내(조건부) -->
+          <div class="num-region" id="s-permBlock">
+            <span class="num-badge">2</span>
+            <!-- 참조 전용(page-local): settingsClient 인라인 안내 — 태깅 대상 아님, my-page/settings/settingsClientStyle.ts:31 (blue_50 · radius 10). NoticeBox CTA형은 orange_50이라 다른 컴포넌트다 -->
+            <!-- 참조 전용(page-local): settingsClient 인라인 안내 — my-page/settings/settingsClientStyle.ts:31 (blue_50 · radius 10) -->
+            <div class="noticebox-cta">
+              <div>
+                <p class="nb-title" style="margin:0;">알림이 꺼져 있어요</p>
+                <p class="nb-desc" style="margin:6px 0 0;">기기 설정에서 알림을 허용하면 재입고 소식을 받을 수 있어요.</p>
+              </div>
+              <button class="nb-btn" id="s-permBtn" type="button">앱 설정으로 이동</button>
+            </div>
+          </div>
+
+          <div style="padding:0 20px;">
+
+            <!-- 3. 기존: 마케팅 정보 수신 동의 -->
+            <div class="num-region">
+              <span class="num-badge shared-needed inset">3</span>
+              <!-- 공용화 필요 — my-page / AgreementToggle (app/my-page/_shared/components/agreementToggle/agreementToggle.tsx) — 태깅 대상 아님 -->
+              <!-- 공용화 필요 — my-page / AgreementToggle -->
+              <!-- component: Switch -->
+              <!-- component: ThinDivider -->
+              <div class="shared-needed-region" style="padding:16px 0;">
+                <div class="info-row">
+                  <p style="margin:0; font-size:16px; font-weight:700; color:var(--g900);">마케팅 정보 수신 동의</p>
+                  <!-- component: Switch -->
+                  <button class="switch on" data-switch="marketing" type="button" aria-label="마케팅 정보 수신 동의"><span class="knob"></span></button>
+                </div>
+                <p style="margin:0; padding:10px 0 0; font-size:14px; font-weight:400; color:var(--g400);">할인·이벤트 등 혜택 정보를 알림으로 받아요.</p>
+              </div>
+            </div>
+
+            <!-- component: ThinDivider -->
+          <hr class="thin-divider" />
+
+            <!-- 4. 신규: 재입고 알림 수신 -->
+            <div class="num-region">
+              <span class="num-badge proposed inset">4</span>
+              <!-- 공용화 필요 — my-page / AgreementToggle (app/my-page/_shared/components/agreementToggle/agreementToggle.tsx) 승격 후 항목 추가 — 신규 제작 아님 -->
+              <!-- 공용화 필요 — my-page / AgreementToggle -->
+              <!-- component: Switch -->
+              <div class="proposed-region" style="padding:16px 12px;">
+                <div class="info-row">
+                  <p style="margin:0; font-size:16px; font-weight:700; color:var(--g900);">재입고 알림 수신</p>
+                  <!-- component: Switch -->
+                  <button class="switch on" data-switch="restock" type="button" aria-label="재입고 알림 수신"><span class="knob"></span></button>
+                </div>
+                <p style="margin:0; padding:10px 0 0; font-size:14px; font-weight:400; color:var(--g400);" id="s-restockDesc">신청한 상품이 재입고되면 알림으로 알려드려요.</p>
+                <p style="margin:0; font-size:13px; font-weight:500; color:var(--red500);" class="hidden" id="s-restockWarn">알림을 끄면 신청한 상품이 재입고되어도 알림을 받을 수 없어요.</p>
+              </div>
+            </div>
+
+            <!-- component: ThinDivider -->
+          <hr class="thin-divider" />
+
+            <!-- 5. 내역 진입 -->
+            <div class="num-region">
+              <span class="num-badge inset">5</span>
+              <!-- component: ListText -->
+              <!-- component: SmallChevronRightSVG -->
+              <div class="info-row" style="padding:20px 0; cursor:pointer;">
+                <p style="margin:0; font-size:16px; font-weight:500; color:var(--g900);">재입고 알림 내역</p>
+                <span style="display:flex; align-items:center; gap:6px;">
+                  <!-- component: ListText -->
+                  <span class="list-text" id="s-listCount">3건</span>
+                  <!-- component: SmallChevronRightSVG -->
+                  <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 17 17" fill="none"><path d="M6.12 12.24L10.2 8.15996L6.12 4.07996" stroke="#4D5761" stroke-width="1.36" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 6. BottomMenu -->
+          <div class="num-region" style="margin-top:60px;">
+            <span class="num-badge">6</span>
+            <!-- component: BottomMenu -->
+            <div class="app-bottommenu">
+              <span class="tab">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 25 24" fill="none"><path d="M8.16663 17H16.1666M11.1843 2.76403L4.40202 8.03916C3.94865 8.39178 3.72196 8.56809 3.55865 8.78889C3.41399 8.98447 3.30623 9.20481 3.24065 9.43908C3.16663 9.70355 3.16663 9.99073 3.16663 10.5651V17.8C3.16663 18.9201 3.16663 19.4802 3.38461 19.908C3.57636 20.2843 3.88232 20.5903 4.25864 20.782C4.68647 21 5.24652 21 6.36663 21H17.9666C19.0867 21 19.6468 21 20.0746 20.782C20.4509 20.5903 20.7569 20.2843 20.9486 19.908C21.1666 19.4802 21.1666 18.9201 21.1666 17.8V10.5651C21.1666 9.99073 21.1666 9.70355 21.0926 9.43908C21.027 9.20481 20.9193 8.98447 20.7746 8.78889C20.6113 8.56809 20.3846 8.39178 19.9312 8.03916L13.1489 2.76403C12.7976 2.49078 12.6219 2.35415 12.428 2.30163C12.2568 2.25529 12.0764 2.25529 11.9053 2.30163C11.7113 2.35415 11.5356 2.49078 11.1843 2.76403Z" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span class="lbl">스토어</span>
+              </span>
+              <span class="tab">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M18.9998 10L4.99984 10M18.9998 10L20.864 13.1069C21.2818 13.8032 21.4907 14.1514 21.5992 14.5262C21.6953 14.8582 21.7333 15.2045 21.7115 15.5495C21.6869 15.9389 21.5585 16.324 21.3017 17.0944L21.0939 17.7179C20.7005 18.8981 20.5038 19.4882 20.1389 19.9245C19.8167 20.3098 19.403 20.608 18.9356 20.7918C18.4063 21 17.7843 21 16.5402 21L7.45949 21C6.21542 21 5.59338 21 5.0641 20.7918C4.59672 20.608 4.18296 20.3098 3.86078 19.9245C3.49592 19.4882 3.29922 18.8981 2.90581 17.7179L2.69798 17.0944C2.44119 16.324 2.3128 15.9389 2.2882 15.5495C2.2664 15.2044 2.3044 14.8582 2.40053 14.5261C2.50902 14.1514 2.71791 13.8032 3.13569 13.1069L4.99984 10M18.9998 10L19.4171 8.53955C19.6149 7.84717 19.7139 7.50097 19.6362 7.22708C19.5681 6.98715 19.4128 6.78132 19.2008 6.64996C18.9588 6.5 18.5988 6.5 17.8787 6.5L6.12101 6.5C5.40092 6.5 5.04087 6.5 4.79886 6.64996C4.58686 6.78132 4.4316 6.98715 4.36354 7.22708C4.28584 7.50097 4.38475 7.84717 4.58257 8.53955L4.99984 10M11.9998 6.5H8.46413C7.94317 6.5 7.44355 6.28929 7.07517 5.91421C6.70679 5.53914 6.49984 5.03043 6.49984 4.5C6.49984 3.96957 6.70679 3.46086 7.07517 3.08579C7.44355 2.71071 7.94317 2.5 8.46413 2.5C11.2141 2.5 11.9998 6.5 11.9998 6.5ZM11.9998 6.5H15.5356C16.0565 6.5 16.5561 6.28929 16.9245 5.91421C17.2929 5.53914 17.4998 5.03043 17.4998 4.5C17.4998 3.96957 17.2929 3.46086 16.9245 3.08579C16.5561 2.71071 16.0565 2.5 15.5356 2.5C12.7856 2.5 11.9998 6.5 11.9998 6.5Z" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span class="lbl">캠페인</span>
+              </span>
+              <span class="tab">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 25 24" fill="none"><path d="M13.3326 18.3639L11.9183 19.7781C9.96572 21.7308 6.7999 21.7308 4.84728 19.7781C2.89466 17.8255 2.89466 14.6597 4.84728 12.7071L6.26149 11.2929M18.9894 12.7071L20.4036 11.2929C22.3562 9.34024 22.3562 6.17441 20.4036 4.22179C18.451 2.26917 15.2852 2.26917 13.3326 4.22179L11.9183 5.636M9.12545 15.4999L16.1255 8.49994" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span class="lbl">링크샵</span>
+              </span>
+              <span class="tab">
+                <svg width="24" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12.5 22C18.0228 22 22.5 17.5228 22.5 12C22.5 6.47714 18.0228 2 12.5 2C6.97715 2 2.50001 6.47714 2.50001 12C2.50001 17.5228 6.97715 22 12.5 22Z" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.75001 12H8.62778" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M16.3726 12H18.2503" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M16.8133 9L14.8892 15.1537C14.8369 15.3209 14.8108 15.4046 14.7706 15.4271C14.7358 15.4467 14.6935 15.447 14.6584 15.4281C14.6178 15.4061 14.5903 15.3229 14.5353 15.1566L12.6763 9.53375C12.6227 9.37133 12.5958 9.29012 12.5556 9.26815C12.5209 9.24914 12.4789 9.24914 12.4441 9.26815C12.404 9.29012 12.3771 9.37133 12.3234 9.53375L10.4644 15.1566C10.4094 15.3229 10.3819 15.4061 10.3414 15.4281C10.3063 15.447 10.264 15.4467 10.2292 15.4271C10.189 15.4046 10.1629 15.3209 10.1106 15.1537L8.18649 9" stroke="#6C737F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span class="lbl">수익금</span>
+              </span>
+              <span class="tab on">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M20 21C20 19.6044 20 18.9067 19.8278 18.3389C19.44 17.0605 18.4395 16.06 17.1611 15.6722C16.5933 15.5 15.8956 15.5 14.5 15.5H9.5C8.10444 15.5 7.40665 15.5 6.83886 15.6722C5.56045 16.06 4.56004 17.0605 4.17224 18.3389C4 18.9067 4 19.6044 4 21M16.5 7.5C16.5 9.98528 14.4853 12 12 12C9.51472 12 7.5 9.98528 7.5 7.5C7.5 5.01472 9.51472 3 12 3C14.4853 3 16.5 5.01472 16.5 7.5Z" stroke="#111927" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span class="lbl">MY</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- component: Toast -->
+          <div class="app-toast bottom" id="s-toast" style="bottom:70px;"><span class="num-badge">7</span><!-- component: Toast --><div class="msg" id="s-toastMsg">재입고 알림이 설정되었어요</div></div>
+
+        </div>
+      </div>
+      <p class="frame-caption">토글을 눌러 보세요 — 재입고 알림을 끄면 경고 문구가 나타납니다 · <a href="#" id="s-togglePerm">OS 푸시 권한 허용 상태로 보기</a></p>
+    </div>
+
+    <div class="screen-desc">
+      <h4>디스크립션 — my-page-settings-restock (설정 — 재입고 알림 수신)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>헤더</strong> — <code>Header</code>. 기존 <code>/my-page/settings</code> 화면을 그대로 쓰며 새 페이지를 만들지 않는다.<div class="tag-row"><span class="pair"><span class="tag">Header</span> <code>components-header--back-and-title</code></span><span class="pair"><span class="tag">BackSVG</span> <code>icons-each--back-svg</code></span></div></div></li>
+        <li><span class="num">2</span><div><strong>OS 푸시 권한 꺼짐 안내</strong> — <strong>참조 전용(page-local)</strong>. 이 안내는 현재도 이 화면에 존재하며(문구 키 <code>settingPage.alarm.title/description/button</code>) 버튼이 Flutter 브릿지로 앱 설정 이동을 요청한다. 다만 이 블록은 공용 컴포넌트가 아니라 <code>settingsClient</code>의 페이지 전용 인라인 <code>styled</code>(<code>my-page/settings/settingsClientStyle.ts:31</code> — <code>blue_50</code> · radius 10)이므로 태깅 대상이 아니다. 공용 <code>NoticeBox</code>의 CTA형은 <code>orange_50</code> + 하단 둥근 버튼(<code>noticeBoxStyle.ts:13</code>)으로 색부터 다른 별개 컴포넌트다 — 여기에 CTA형을 쓰라는 뜻이 아니다. 재입고 알림에서도 이 기존 안내를 그대로 재사용하고 새로 만들지 않으며, 권한이 허용되면 이 블록은 사라진다.<div class="tag-row"><span class="pair"><span class="tag sample">참조 전용(page-local) — settingsClient 인라인 안내</span> <code>src/app/my-page/settings/settingsClientStyle.ts:31</code></span></div></div></li>
+        <li><span class="num shared-needed">3</span><div><strong>마케팅 정보 수신 동의(기존)</strong> — 제목 + <code>Switch</code> + 설명 + <code>ThinDivider</code> 조합의 동의 행. 이 행은 페이지 전용 <code>AgreementToggle</code>(<code>my-page</code>)이 담당하므로 태깅 대상이 아니다. 재입고 알림 행이 같은 모양을 써야 하는데 페이지 전용이라 import할 수 없다 → <em>공용화 필요</em>. <code>Switch</code> 자체는 공용이므로 그대로 태깅한다.<div class="tag-row"><span class="pair"><span class="tag shared">공용화 필요 — my-page / AgreementToggle</span> <code>app/my-page/_shared/components/agreementToggle/agreementToggle.tsx</code></span><span class="pair"><span class="tag">Switch</span> <code>atoms-switch--off</code></span><span class="pair"><span class="tag">ThinDivider</span> <code>atoms-dividers--thin</code></span></div></div></li>
+        <li><span class="num proposed">4</span><div><strong>재입고 알림 수신(추가 항목)</strong> — 3번과 같은 동의 행 형태로 항목 하나를 추가한다. 끄면 붉은 경고 문구(<code>label2.medium</code> / <code>red_500</code>)로 결과를 알린다 — 이 경고 문구 스타일도 <code>AgreementToggle</code>이 이미 가진 것이므로, 공용화가 선행되면 신규 제작 없이 항목만 추가된다. 지금 이 영역을 주황으로 표시한 이유는 <em>공용화 전에는 구현 자산이 없다</em>는 뜻이고, 새 컴포넌트를 만들라는 뜻이 아니다.<div class="tag-row"><span class="pair"><span class="tag shared">공용화 필요 — my-page / AgreementToggle</span> <code>app/my-page/_shared/components/agreementToggle/agreementToggle.tsx</code></span><span class="pair"><span class="tag">Switch</span> <code>atoms-switch--off</code></span></div></div></li>
+        <li><span class="num">5</span><div><strong>재입고 알림 내역 진입</strong> — <code>ListText</code>(건수) + <code>SmallChevronRightSVG</code>. 화면 3으로 이동한다. 알림 수신을 껐어도 신청 내역 자체는 유지되므로 이 진입점은 항상 노출한다.<div class="tag-row"><span class="pair"><span class="tag">ListText</span> <code>atoms-listtext--default</code></span><span class="pair"><span class="tag">SmallChevronRightSVG</span> <code>icons-each--small-chevron-right-svg</code></span></div></div></li>
+        <li><span class="num">6</span><div><strong>하단 탭</strong> — <code>BottomMenu</code>. 설정은 마이페이지 하위이므로 MY 탭이 활성(<code>gray_neutral_900</code> / 비활성 <code>gray_neutral_500</code>)이다. 탭 구성은 스타일셀러 로그인 케이스(스토어·캠페인·링크샵·수익금·MY) 기준.<div class="tag-row"><span class="pair"><span class="tag">BottomMenu</span> <code>components-bottommenu--style-seller</code></span></div></div></li>
+        <li><span class="num">7</span><div><strong>설정 변경 안내</strong> — <code>Toast</code>. 토글 결과를 하단 토스트로 알린다(마케팅 동의 토글이 현재 쓰는 방식과 동일).<div class="tag-row"><span class="pair"><span class="tag">Toast</span> <code>components-toast--default</code></span></div></div></li>
+      </ol>
+      <p class="new-component-note">
+        <strong>디자인 시스템 미보유:</strong> 없음 — 이 화면의 모든 요소가 기존 컴포넌트로 덮인다. <span class="shared-name">공용화 필요 — my-page / AgreementToggle</span> (<code>app/my-page/_shared/components/agreementToggle/agreementToggle.tsx</code>): 3·4번의 “제목 + Switch + 설명 + 경고문구 + 하단 구분선” 동의 행이 <code>my-page</code> 페이지 전용으로 묶여 있다. 재입고 알림 항목이 같은 UI를 쓰려면 공용 승격이 선행돼야 한다(승격되면 4번은 항목 추가만으로 끝난다).
+        그 외 사용 컴포넌트: <code>Header</code>, <code>Switch</code>, <code>ThinDivider</code>, <code>ListText</code>, <code>BottomMenu</code>, <code>Toast</code>, 아이콘 <code>BackSVG</code>·<code>SmallChevronRightSVG</code>.
+        2번 OS 푸시 권한 꺼짐 안내는 <code>settingsClient</code>의 페이지 전용 인라인 <code>styled</code>(<code>src/app/my-page/settings/settingsClientStyle.ts:31</code> — <code>blue_50</code> · radius 10)로 <strong>참조 전용이며 태깅 대상이 아니다</strong>. 공용 <code>NoticeBox</code>의 CTA형(<code>orange_50</code> + 하단 둥근 버튼)과는 다른 컴포넌트이므로 이 자리에 CTA형을 만들거나 적용하지 않는다.
+      </p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* =========================================================================
+   화면 1 — 상품 상세(품절): 바텀시트 / 옵션 선택 / 신청·해제 / 권한 안내
+   ========================================================================= */
+(function () {
+  var backdrop = document.getElementById('g-backdrop');
+  var sheet    = document.getElementById('g-sheet');
+  var cta      = document.getElementById('g-cta');
+  var optbox   = document.getElementById('g-optbox');
+  var optToggle= document.getElementById('g-optToggle');
+  var chipWrap = document.getElementById('g-chips');
+  var agree    = document.getElementById('g-agree');
+  var submit   = document.getElementById('g-submit');
+  var toast    = document.getElementById('g-toast');
+  var toastMsg = document.getElementById('g-toastMsg');
+  var permBlock= document.getElementById('g-permBlock');
+  var noticeBtn= document.getElementById('g-noticeBtn');
+
+  var picked = [];          // 선택된 옵션명
+  var agreed = false;       // 수신 동의
+  var applied = false;      // 신청 완료 여부
+  var permissionDenied = false; // OS 푸시 권한 미허용 시뮬레이션
+
+  function showToast(msg) {
+    toastMsg.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { toast.classList.remove('show'); }, 2200);
+  }
+
+  function renderChips() {
+    chipWrap.innerHTML = '';
+    picked.forEach(function (name) {
+      var chip = document.createElement('span');
+      chip.className = 'chip filled';
+      chip.innerHTML = name +
+        '<button class="x" type="button" aria-label="선택 해제">' +
+        '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M15 5L5 15M5 5L15 15" stroke="#D1D1D6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>' +
+        '</button>';
+      chip.querySelector('.x').addEventListener('click', function () {
+        picked = picked.filter(function (n) { return n !== name; });
+        syncSheet();
+      });
+      chipWrap.appendChild(chip);
+    });
+  }
+
+  function syncSheet() {
+    // 옵션 박스 타이틀: 선택 개수 요약
+    var titleText = picked.length === 0 ? '옵션을 선택해 주세요' : '옵션 ' + picked.length + '개 선택';
+    optToggle.querySelector('span').textContent = titleText;
+    // 선택된 항목 표시
+    optbox.querySelectorAll('.opt-item').forEach(function (item) {
+      item.classList.toggle('picked', picked.indexOf(item.dataset.opt) !== -1);
+    });
+    renderChips();
+    submit.disabled = !(picked.length > 0 && agreed);
+  }
+
+  function openSheet() {
+    backdrop.classList.add('open');
+    sheet.classList.add('open');
+  }
+  function closeSheet() {
+    backdrop.classList.remove('open');
+    sheet.classList.remove('open');
+    optbox.classList.remove('open');
+  }
+
+  function renderCta() {
+    cta.className = 'btn s-2xl btn-full ' + (applied ? 'c-greyOutLine' : 'c-black');
+    cta.textContent = applied ? '재입고 알림 신청 완료' : '재입고 알림 받기';
+  }
+
+  optToggle.addEventListener('click', function () { optbox.classList.toggle('open'); });
+
+  optbox.querySelectorAll('.opt-item').forEach(function (item) {
+    item.addEventListener('click', function () {
+      var name = item.dataset.opt;
+      if (picked.indexOf(name) === -1) picked.push(name);
+      else picked = picked.filter(function (n) { return n !== name; });
+      optbox.classList.remove('open');
+      syncSheet();
+    });
+  });
+
+  agree.addEventListener('click', function () {
+    agreed = !agreed;
+    agree.classList.toggle('on', agreed);
+    syncSheet();
+  });
+
+  submit.addEventListener('click', function () {
+    applied = true;
+    renderCta();
+    closeSheet();
+    showToast('재입고 알림을 신청했어요 (' + picked.length + '개 옵션)');
+    // 권한 미허용이면 신청 직후 안내 노출 (story-restock-alert-push-permission)
+    permBlock.classList.toggle('hidden', !permissionDenied);
+  });
+
+  cta.addEventListener('click', function () {
+    if (!applied) { openSheet(); return; }
+    // 신청 완료 상태에서 다시 누르면 해제
+    applied = false;
+    picked = [];
+    agreed = false;
+    agree.classList.remove('on');
+    renderCta();
+    syncSheet();
+    permBlock.classList.add('hidden');
+    showToast('재입고 알림을 해제했어요');
+  });
+
+  noticeBtn.addEventListener('click', function () {
+    if (applied) { showToast('이미 재입고 알림을 신청했어요'); return; }
+    openSheet();
+  });
+
+  backdrop.addEventListener('click', closeSheet);
+
+  document.getElementById('g-permBtn').addEventListener('click', function () {
+    permissionDenied = false;
+    permBlock.classList.add('hidden');
+    showToast('알림 권한이 허용되었어요');
+  });
+
+  document.getElementById('g-togglePerm').addEventListener('click', function (e) {
+    e.preventDefault();
+    permissionDenied = !permissionDenied;
+    this.textContent = permissionDenied ? 'OS 푸시 권한 허용 상태로 보기' : 'OS 푸시 권한 꺼진 상태로 보기';
+    permBlock.classList.toggle('hidden', !(permissionDenied && applied));
+    showToast(permissionDenied ? '푸시 권한 미허용 상태로 전환' : '푸시 권한 허용 상태로 전환');
+  });
+
+  syncSheet();
+  renderCta();
+})();
+
+/* =========================================================================
+   화면 3 — 재입고 알림 내역: 목록 렌더 / 개별·전체 해제 / 빈 상태 / 푸시
+   ========================================================================= */
+(function () {
+  var SEED = [
+    { id: 1, name: '데일리 스텐 텀블러 500ml (2color)', option: '아이보리 / 500ml', date: '2026.07.26 신청', state: 'WAITING' },
+    { id: 2, name: '무선 핸디 선풍기 3세대', option: '화이트 / 기본형', date: '2026.07.24 신청', state: 'RESTOCKED' },
+    { id: 3, name: '순면 여름 이불 패드 SS', option: '민트 / SS', date: '2026.07.21 신청', state: 'WAITING' }
+  ];
+  var items = SEED.slice();
+
+  var listEl   = document.getElementById('l-list');
+  var emptyEl  = document.getElementById('l-empty');
+  var countEl  = document.getElementById('l-count');
+  var countRow = countEl.closest('.num-region');
+  var toast    = document.getElementById('l-toast');
+  var toastMsg = document.getElementById('l-toastMsg');
+  var pushEl   = document.getElementById('l-push');
+  var settingCount = document.getElementById('s-listCount');
+
+  function showToast(msg) {
+    toastMsg.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { toast.classList.remove('show'); }, 2000);
+  }
+
+  function badgeHtml(state) {
+    return state === 'RESTOCKED'
+      ? '<span class="badge b-onSale">재입고 완료</span>'
+      : '<span class="badge b-saleClosed">알림 대기</span>';
+  }
+
+  function render() {
+    listEl.innerHTML = '';
+    items.forEach(function (it) {
+      var row = document.createElement('div');
+      row.className = 'prow-item';
+      row.innerHTML =
+        '<div class="prow">' +
+          '<div class="thumb85" style="font-size:11px; color:var(--g400);">이미지</div>' +
+          '<div class="info">' +
+            '<div>' +
+              '<p class="gname" style="margin:0;">' + it.name + '</p>' +
+              '<p class="oname" style="margin:2px 0 0;">' + it.option + '</p>' +
+            '</div>' +
+            '<div class="rowfoot">' +
+              '<span style="display:flex; align-items:center; gap:6px;">' +
+                badgeHtml(it.state) +
+                '<span class="list-text" style="font-size:12px;">' + it.date + '</span>' +
+              '</span>' +
+              '<button class="btn s-xs c-greyOutLine" type="button" data-off="' + it.id + '">알림 해제</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      listEl.appendChild(row);
+    });
+
+    listEl.querySelectorAll('[data-off]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = Number(btn.dataset.off);
+        items = items.filter(function (i) { return i.id !== id; });
+        render();
+        showToast('재입고 알림을 해제했어요');
+      });
+    });
+
+    var empty = items.length === 0;
+    emptyEl.classList.toggle('hidden', !empty);
+    listEl.classList.toggle('hidden', empty);
+    countRow.classList.toggle('hidden', empty);
+    countEl.textContent = '전체 ' + items.length + '건';
+    if (settingCount) settingCount.textContent = items.length + '건';
+  }
+
+  document.getElementById('l-clearAll').addEventListener('click', function () {
+    if (items.length === 0) return;
+    items = [];
+    render();
+    showToast('신청한 재입고 알림을 모두 해제했어요');
+  });
+
+  document.getElementById('l-showPush').addEventListener('click', function (e) {
+    e.preventDefault();
+    pushEl.classList.add('show');
+    setTimeout(function () { pushEl.classList.remove('show'); }, 3200);
+  });
+
+  document.getElementById('l-reset').addEventListener('click', function (e) {
+    e.preventDefault();
+    items = SEED.slice();
+    render();
+    showToast('목록을 초기화했어요');
+  });
+
+  render();
+})();
+
+/* =========================================================================
+   화면 4 — 설정: 수신 토글 / 경고 문구 / 권한 안내
+   ========================================================================= */
+(function () {
+  var toast    = document.getElementById('s-toast');
+  var toastMsg = document.getElementById('s-toastMsg');
+  var warn     = document.getElementById('s-restockWarn');
+  var desc     = document.getElementById('s-restockDesc');
+  var permBlock= document.getElementById('s-permBlock');
+
+  function showToast(msg) {
+    toastMsg.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { toast.classList.remove('show'); }, 2000);
+  }
+
+  document.querySelectorAll('[data-switch]').forEach(function (sw) {
+    sw.addEventListener('click', function () {
+      var on = !sw.classList.contains('on');
+      sw.classList.toggle('on', on);
+      var isRestock = sw.dataset.switch === 'restock';
+      if (isRestock) {
+        warn.classList.toggle('hidden', on);
+        desc.classList.toggle('hidden', !on);
+        showToast(on ? '재입고 알림이 설정되었어요' : '재입고 알림이 해제되었어요');
+      } else {
+        showToast(on ? '마케팅 정보 수신에 동의했어요' : '마케팅 정보 수신 동의를 해제했어요');
+      }
+    });
+  });
+
+  document.getElementById('s-permBtn').addEventListener('click', function () {
+    permBlock.classList.add('hidden');
+    showToast('알림 권한이 허용되었어요');
+  });
+
+  document.getElementById('s-togglePerm').addEventListener('click', function (e) {
+    e.preventDefault();
+    var hidden = permBlock.classList.toggle('hidden');
+    this.textContent = hidden ? 'OS 푸시 권한 꺼진 상태로 보기' : 'OS 푸시 권한 허용 상태로 보기';
+  });
+})();
+</script>
+
+
+<!-- ================= 우측 플로팅 디스크립션 패널 =================
+     화면 아래 .screen-desc 가 원본이고, 이 패널은 현재 보고 있는 화면의
+     디스크립션을 복제해 보여준다. 토글로 접었다 펼 수 있다. -->
+<aside class="desc-panel" id="descPanel">
+  <div class="desc-panel__head">
+    <span class="desc-panel__label">디스크립션</span>
+    <span class="desc-panel__screen" id="descPanelScreen">—</span>
+    <button class="desc-panel__toggle" id="descPanelToggle" type="button" aria-expanded="true">접기</button>
+  </div>
+  <div class="desc-panel__body" id="descPanelBody"></div>
+</aside>
+
+<script>
+  // ---- 우측 플로팅 디스크립션 패널 ----
+  // 화면 아래 .screen-desc(원본)를 복제해 패널에 띄운다. 원본은 CSS로 숨겨져 있다.
+  (function initDescPanel() {
+    const panel = document.getElementById('descPanel');
+    const body = document.getElementById('descPanelBody');
+    const screenLabel = document.getElementById('descPanelScreen');
+    const toggle = document.getElementById('descPanelToggle');
+    const blocks = Array.from(document.querySelectorAll('.screen-block'));
+    if (!panel || !blocks.length) return;
+
+    let activeId = null;
+    function render(block) {
+      if (!block || block.id === activeId) return;
+      activeId = block.id;
+      const num = block.querySelector('.screen-num');
+      const title = block.querySelector('.screen-title h3');
+      screenLabel.textContent =
+        (num ? num.textContent + ' · ' : '') + (title ? title.textContent.trim() : '');
+      const desc = block.querySelector('.screen-desc');
+      body.innerHTML = '';
+      if (desc) body.appendChild(desc.cloneNode(true));
+      body.scrollTop = 0;
+    }
+
+    // 뷰포트에서 가장 많이 보이는 화면 블록을 활성으로 삼는다
+    const ratios = new Map();
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((e) => ratios.set(e.target, e.intersectionRatio));
+      let best = null, bestRatio = 0;
+      ratios.forEach((r, el) => { if (r > bestRatio) { bestRatio = r; best = el; } });
+      if (best) render(best);
+    }, { threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] });
+    blocks.forEach((b) => observer.observe(b));
+
+    render(blocks[0]);
+
+    toggle.addEventListener('click', () => {
+      const collapsed = panel.classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '펼치기' : '접기';
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+  })();
+</script>
+</body>
+</html>

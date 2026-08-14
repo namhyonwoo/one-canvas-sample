@@ -1,0 +1,15 @@
+# Cloud Run 전용 프로파일. SPRING_PROFILES_ACTIVE=cloudrun 으로 활성화한다.
+#
+# Cloud SQL에 유닉스 소켓으로 붙으므로 IP 허용목록에 등록할 필요가 없다.
+# 대신 아래 두 가지가 갖춰져야 한다.
+#   1. 배포 시 --add-cloudsql-instances=<커넥션 이름>
+#   2. Cloud Run 런타임 서비스 계정에 roles/cloudsql.client 부여 + Cloud SQL Admin API 활성화
+#
+# username/password는 application.yml에서 상속하며, 배포 시 환경변수와
+# Secret Manager로 덮어쓴다.
+spring:
+  datasource:
+    url: jdbc:mysql:///${DB_NAME:one-tool}?cloudSqlInstance=${CLOUD_SQL_INSTANCE:YOUR_PROJECT:YOUR_REGION:YOUR_SQL_INSTANCE}&socketFactory=com.google.cloud.sql.mysql.SocketFactory&characterEncoding=utf8
+    hikari:
+      # 운영 DB를 여러 서비스가 공유하므로 인스턴스당 커넥션을 보수적으로 잡는다.
+      maximum-pool-size: 5

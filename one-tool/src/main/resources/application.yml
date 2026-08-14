@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: one-tool
+
+  datasource:
+    # MySQL은 R2DBC 드라이버가 있지만 저장소 계층이 JdbcTemplate/JdbcClient로 쓰여 있어
+    # 블로킹 JDBC를 유지한다. DB 서버 타임존이 +09:00이라 created_at은 KST로 기록된다.
+    url: jdbc:mysql://${DB_HOST:YOUR_DB_HOST}:3306/${DB_NAME:one-tool}?characterEncoding=utf8
+    username: ${DB_USERNAME:YOUR_DB_USERNAME}
+    # 비밀번호는 기본값을 두지 않는다. 주입되지 않으면 부팅 시점에 바로 실패해야 한다.
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: mysql-pool
+
+  sql:
+    init:
+      # MySQL은 embedded DB로 인식되지 않으므로 always로 명시해야 schema.sql이 실행된다.
+      # schema.sql은 전부 IF NOT EXISTS라서 매 부팅 재실행이 안전하다.
+      mode: always
+      schema-locations: classpath:schema.sql
+
+server:
+  # Cloud Run은 PORT로 리스닝 포트를 주입한다. 로컬은 8080을 그대로 쓴다.
+  port: ${PORT:8080}
+
+logging:
+  level:
+    org.springframework.jdbc.core.JdbcTemplate: debug

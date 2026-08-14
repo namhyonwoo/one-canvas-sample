@@ -1,0 +1,42 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '4.1.0'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.styleseller'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
+	// MySQL은 R2DBC 드라이버가 있지만 저장소 계층이 JdbcTemplate/JdbcClient로 쓰여 있어
+	// 블로킹 JDBC를 유지한다. 조회/변경은 Schedulers.boundedElastic()으로 오프로딩한다.
+	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+	runtimeOnly 'com.mysql:mysql-connector-j'
+
+	// Cloud Run에서 Cloud SQL에 유닉스 소켓으로 붙기 위한 소켓 팩토리.
+	// Connector/J 자체는 유닉스 소켓을 다루지 못한다.
+	// -9 변형은 아직 배포되지 않아 -8을 쓰고, 딸려오는 Connector/J 8은 제외해
+	// Spring Boot BOM이 정한 9.7.0을 유지한다.
+	runtimeOnly('com.google.cloud.sql:mysql-socket-factory-connector-j-8:1.28.4') {
+		exclude group: 'com.mysql', module: 'mysql-connector-j'
+	}
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-webflux-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}

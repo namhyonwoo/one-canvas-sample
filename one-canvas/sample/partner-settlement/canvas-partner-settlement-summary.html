@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>통합 캔버스 샘플 — 파트너 정산 요약 대시보드</title>
+<meta name="canvas-updated-at" content="2026-08-03T16:28:30+09:00">
+<style>
+  :root {
+    --border: #e5e7eb;
+    --border-strong: #d2d6db;
+    --bg-soft: #f9fafb;
+    --text-900: #111927;
+    --text-700: #384250;
+    --text-600: #4d5761;
+    --text-500: #6c737f;
+    --blue: #2e90fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 0 24px 80px;
+    line-height: 1.6;
+    color: #1c1f24;
+  }
+  h1 { font-size: 22px; border-bottom: 2px solid #1c1f24; padding-bottom: 12px; }
+  h2 {
+    font-size: 17px;
+    margin-top: 48px;
+    padding: 8px 12px;
+    background: var(--bg-soft);
+    border-left: 4px solid var(--blue);
+  }
+  .meta { color: var(--text-500); font-size: 13px; margin-bottom: 16px; }
+  table.spec { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.spec th, table.spec td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.spec th { background: var(--bg-soft); width: 140px; }
+  ul.ref-list { list-style: disc; margin: 8px 0 0 20px; padding: 0; font-size: 14px; color: var(--text-700); }
+  ul.ref-list li { margin-bottom: 6px; }
+  ul.ref-list a { color: var(--blue); }
+  h3.epic-group {
+    font-size: 14px; margin: 24px 0 8px; color: var(--text-900);
+    font-family: "SF Mono", Menlo, monospace; font-weight: 600;
+  }
+  h3.epic-group .kr { font-family: inherit; font-weight: 400; color: var(--text-600); }
+  ul.story-list { padding-left: 20px; }
+  ul.story-list li { margin-bottom: 12px; font-size: 14px; color: var(--text-700); }
+  ul.story-list .story-name { display: block; font-weight: 600; color: var(--text-900); margin-bottom: 2px; }
+  ul.story-list .gwt { margin: 4px 0 0; padding-left: 16px; }
+  ul.story-list .gwt li { margin-bottom: 4px; font-size: 13px; }
+  ul.story-list .gwt b { color: var(--text-900); font-weight: 600; }
+  /* ===== 우측 플로팅 디스크립션 패널 =====
+     화면 아래의 .screen-desc 블록이 원본(작성 대상)이고,
+     패널은 스크롤 위치에 해당하는 블록을 복제해 보여주기만 한다. */
+  .screen-desc { display: none; }
+
+  .desc-panel {
+    position: fixed; top: 72px; right: 20px; z-index: 40;
+    width: 320px; max-height: calc(100vh - 110px);
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border-strong); border-radius: 10px;
+    background: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.10);
+  }
+  .desc-panel__head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-bottom: 1px solid var(--border);
+    background: var(--bg-soft); border-radius: 9px 9px 0 0;
+  }
+  .desc-panel.collapsed .desc-panel__head { border-bottom: none; border-radius: 9px; }
+  .desc-panel__label { font-size: 11.5px; font-weight: 700; color: var(--text-700); letter-spacing: .03em; }
+  .desc-panel__screen {
+    flex: 1; min-width: 0; font-size: 11px; color: var(--text-500);
+    font-family: "SF Mono", Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .desc-panel__toggle {
+    flex: 0 0 auto; border: 1px solid var(--border-strong); background: #fff;
+    cursor: pointer; font-size: 11px; color: var(--text-600);
+    border-radius: 6px; padding: 2px 8px; line-height: 1.5;
+  }
+  .desc-panel__body { padding: 14px; overflow-y: auto; overflow-wrap: anywhere; }
+  /* 패널 폭이 좁으므로 태그·스토리북 경로가 잘리지 않고 줄바꿈되게 한다.
+     .pair 가 inline-flex 라 자식이 min-width:auto 로 안 줄어드는 문제를 함께 푼다. */
+  .desc-panel__body .desc-legend li { min-width: 0; }
+  .desc-panel__body .desc-legend li > div { min-width: 0; flex: 1 1 auto; }
+  .desc-panel__body .tag-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .desc-panel__body .tag-row .pair { display: block; max-width: 100%; min-width: 0; }
+  .desc-panel__body .tag-row .pair > * { min-width: 0; max-width: 100%; }
+  .desc-panel__body code { white-space: normal; overflow-wrap: anywhere; }
+  .desc-panel.collapsed .desc-panel__body { display: none; }
+  .desc-panel__body .screen-desc { display: block; border: none; border-radius: 0; padding: 0; background: none; margin: 0; }
+  .desc-panel__body .screen-desc h4 { margin-bottom: 10px; }
+
+  /* 디스크립션 항목에 병기하는 컴포넌트 표기 (화면 안 주석을 대체) — 상세형.
+     .tag 는 컴포넌트명, code 는 스토리북 story id 다. 정본은 각 *.stories.tsx 의 title 메타이고,
+     story id 는 그 title + export 이름에서 파생되며 URL로 바로 여는 용도다
+     (yarn storybook 후 http://localhost:6008/?path=/story/<story id>). */
+  .tag-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; align-items: center; }
+  .tag-row .pair { display: inline-flex; align-items: center; gap: 4px; }
+  .tag {
+    font-family: "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.5;
+    background: #f2f4f7; color: var(--text-900);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+  }
+  .tag-row .pair > code {
+    font-family: "SF Mono", Menlo, monospace; font-size: 10.5px;
+    background: transparent; color: var(--text-500); padding: 0; white-space: nowrap;
+  }
+  /* 스토리가 없는 컴포넌트 — 빈칸으로 두지 않고 사실을 표시한다 */
+  .tag-row .pair > code.no-story { color: #b54708; font-style: italic; }
+  /* 디자인 시스템 미보유 컴포넌트는 색을 달리해 구분한다 */
+  .tag.proposed { background: #fffcf5; border-color: #fdb022; color: #b54708; }
+
+  @media (max-width: 1320px) {
+    .desc-panel { width: 280px; right: 12px; }
+  }
+
+  /* ===== 화면 블록: 화면(풀사이즈) + 바로 아래 디스크립션 ===== */
+  .screens-main { display: flex; flex-direction: column; gap: 48px; margin-top: 20px; }
+  .screen-block { scroll-margin-top: 20px; }
+  .screen-title { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .screen-title .screen-num { font-size: 13px; font-weight: 700; color: var(--text-500); }
+  .screen-title h3 { font-size: 16px; margin: 0; color: var(--text-900); }
+  .screen-title h3 .kr { font-weight: 400; color: var(--text-600); }
+  .screen-title .badge {
+    font-size: 11px;
+    color: var(--text-500);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+  .screen-mock {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    background: #fff;
+  }
+
+  /* ===== 번호 주석(annotation) — 화면의 특정 부위에 번호를 매김 ===== */
+  .num-region { position: relative; margin-top: 18px; }
+  .num-region:first-child { margin-top: 4px; }
+  .num-badge {
+    position: absolute; top: -10px; left: -10px; z-index: 2;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--text-900); color: #fff;
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 3px #fff;
+  }
+
+  /* ===== 디스크립션 (화면당) — 화면 바로 아래 배치 ===== */
+  .screen-desc {
+    margin-top: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    background: var(--bg-soft);
+  }
+  .screen-desc h4 {
+    font-size: 12.5px; margin: 0 0 12px; color: var(--text-500);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .desc-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .desc-legend li { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; color: var(--text-700); }
+  .desc-legend .num {
+    flex: 0 0 auto; margin-top: 1px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--text-900); color: #fff;
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .desc-legend strong { color: var(--text-900); }
+  .new-component-note {
+    margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--border);
+    font-size: 12.5px; color: var(--text-500);
+  }
+  .new-component-note strong { color: var(--text-700); }
+  .new-component-note.has-proposal { color: var(--text-700); }
+  .new-component-note .proposed-name { color: #b54708; font-weight: 600; }
+
+  /* ===== 디자인 시스템 미보유 영역 — 기존 컴포넌트와 시각적으로 구분
+     (클래스명의 proposed 는 초기 명명 잔재, 의미는 "미보유 표시") ===== */
+  .proposed-region {
+    border: 1px dashed #fdb022; background: #fffcf5; border-radius: 8px; padding: 14px 16px;
+  }
+  .num-badge.proposed { background: #dc6803; }
+  .desc-legend .num.proposed { background: #dc6803; }
+
+  /* ===== 컴포넌트: Button (inputs/button) ===== */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    font-weight: 500; font-size: 14px; border-radius: 8px; cursor: pointer;
+    border: none; height: 36px; padding: 8px 12px;
+  }
+  .btn:active { transform: scale(0.99); }
+  .btn-primary { background: var(--text-900); color: #fff; border: 2px solid rgba(255,255,255,.12); }
+  .btn-primary.lg { height: 44px; padding: 10px 18px; font-size: 15px; }
+  .btn-secondary-gray { background: #fff; border: 1px solid var(--border-strong); color: var(--text-700); }
+  .btn-cancel { background: #fee4e2; color: #d92d20; border: 1px solid #fecdca; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ===== 컴포넌트: Checkbox (inputs/checkbox) ===== */
+  .ds-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-700); cursor: pointer; }
+  .ds-checkbox input { width: 16px; height: 16px; accent-color: #000; cursor: pointer; }
+
+  /* ===== 컴포넌트: DateRangePicker (inputs/dateRangePicker) ===== */
+  .ds-daterange {
+    display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px;
+    border: 1px solid var(--border-strong); border-radius: 8px; background: #fff;
+    box-shadow: 0px 1px 2px 0px rgba(16,24,40,.05);
+  }
+  .ds-daterange input[type="date"] { border: none; outline: none; font-size: 13px; color: #101828; font-family: inherit; }
+  .ds-daterange .sep { color: var(--text-500); font-size: 13px; }
+
+  /* ===== 컴포넌트: FilterChip (inputs/filterChip) — 적용된 필터 표시 ===== */
+  .ds-filterchip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px 4px 12px;
+    border-radius: 9999px; border: 1px solid var(--border); background: var(--bg-soft);
+    font-size: 13px; font-weight: 500;
+  }
+  .ds-filterchip .label { color: var(--blue); }
+  .ds-filterchip .remove { border: none; background: none; color: #9da4ae; cursor: pointer; font-size: 13px; line-height: 1; padding: 2px; }
+
+  /* ===== 컴포넌트: Table (display/table) ===== */
+  .ds-table { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; font-size: 14px; }
+  .ds-table thead th { background: var(--bg-soft); font-weight: 500; padding: 12px 16px; text-align: left; }
+  .ds-table tbody td { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-weight: 400; }
+  .ds-table tbody tr:hover { background: var(--bg-soft); cursor: pointer; }
+  .ds-table tbody tr.empty:hover { background: none; cursor: default; }
+
+  /* ===== 컴포넌트: Tag (display/tag) ===== */
+  .ds-tag { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 12px; font-size: 13px; background: #edfcf2; border: 1px solid #aaf0c4; color: #087443; }
+
+  /* ===== 컴포넌트: Pagination (display/pagination) ===== */
+  .ds-pagination { display: flex; justify-content: center; gap: 4px; padding: 14px 0 0; font-size: 13px; font-weight: 600; }
+  .ds-pagination button { border: none; background: transparent; color: #1f2a37; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+  .ds-pagination button.active { background: var(--bg-soft); }
+  .ds-pagination button:disabled { color: var(--text-500); cursor: not-allowed; }
+
+  /* ===== 컴포넌트: Modal (feedback/modal) ===== */
+  .ds-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity .15s;
+  }
+  .ds-modal-backdrop.open { opacity: 1; pointer-events: auto; }
+  .ds-modal-box {
+    background: #fff; border-radius: 8px; padding: 24px; width: 100%; max-width: 380px;
+    box-shadow: 0px 20px 24px -4px rgba(16,24,40,.08), 0px 8px 8px -4px rgba(16,24,40,.03);
+    transform: scale(.96); opacity: 0; transition: all .15s;
+  }
+  .ds-modal-backdrop.open .ds-modal-box { transform: scale(1); opacity: 1; }
+  .ds-modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+  .ds-modal-header h3 { font-size: 18px; font-weight: 600; margin: 0; }
+  .ds-modal-header button { border: none; background: none; cursor: pointer; font-size: 16px; color: var(--text-500); }
+  .ds-modal-content { margin-bottom: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .ds-modal-footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+  /* ===== 컴포넌트: InfoField (display/infoField) ===== */
+  .ds-infofield { display: flex; flex-direction: column; gap: 2px; }
+  .ds-infofield .label { font-size: 13px; color: var(--text-700); }
+  .ds-infofield .value { font-size: 14px; color: var(--text-900); font-weight: 500; }
+  .ds-infofield .helper { font-size: 12px; color: var(--text-500); }
+  .infofield-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px 16px; }
+
+  /* ===== 컴포넌트: Card (layout/card) ===== */
+  .ds-card { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e4e7ec; box-shadow: 0px 1px 2px 0px rgba(16,24,40,.05); }
+  .ds-card .card-label { font-size: 13px; color: var(--text-500); margin-bottom: 6px; }
+  .ds-card .card-value { font-size: 22px; font-weight: 700; color: var(--text-900); }
+  .card-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+  /* ===== 컴포넌트: ProgressBar (display/progressBar) ===== */
+  .ds-progress { display: flex; align-items: center; gap: 12px; width: 100%; }
+  .ds-progress .track { flex: 1; height: 8px; background: var(--border); border-radius: 9999px; overflow: hidden; }
+  .ds-progress .fill { height: 100%; background: var(--text-600); border-radius: 9999px; transition: width .3s; }
+  .ds-progress .txt { font-size: 14px; font-weight: 500; color: var(--text-600); white-space: nowrap; }
+  .ds-progress .txt .current { color: var(--blue); }
+
+  /* ===== 컴포넌트: SegmentedTabs (navigation/segmentedTabs) ===== */
+  .ds-segtabs { display: flex; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }
+  .ds-segtabs button {
+    border: none; background: transparent; color: var(--text-500);
+    font-size: 14px; font-weight: 600; padding: 8px 16px; cursor: pointer; flex: 1;
+  }
+  .ds-segtabs button.active { background: #fff; color: var(--text-700); box-shadow: inset 0 0 0 1px var(--border-strong); border-radius: 7px; }
+
+  /* ===== 컴포넌트: SubTitle (display/subTitle) ===== */
+  .ds-subtitle { font-size: 20px; font-weight: 700; color: var(--text-900); margin: 0; }
+
+  /* ===== 컴포넌트: Divider (display/divider) ===== */
+  .ds-divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+  .toast {
+    display: inline-block; margin-left: 10px; font-size: 13px; color: #16b364;
+    opacity: 0; transition: opacity .2s;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<h1>파트너 정산 요약 대시보드 (Sample)</h1>
+<p class="meta">문서 종류: 통합캔버스 샘플 · 작성 기준: one-canvas/one-canvas-rule.md 참조 · 캔버스 1개 = 에픽 1개 원칙에 따라 <code>canvas-partner-settlement-list.html</code>(목록 조회 에픽)에서 분리된 문서입니다. 화면 버튼은 실제 동작하는 인터랙션 데모입니다.</p>
+
+<!-- ================= 도메인 ================= -->
+<h2>도메인</h2>
+<table class="spec">
+  <tr><th>도메인</th><td>settlement (정산)</td></tr>
+</table>
+
+<!-- ================= 참고 자료 ================= -->
+<h2>참고 자료</h2>
+<ul class="ref-list">
+  <li><strong>Figma 디자인 시안</strong> — <a href="https://figma.com/file/xxxx-partner-settlement" target="_blank" rel="noopener">https://figma.com/file/xxxx-partner-settlement</a> — 정산 내역 조회 화면 3종 hi-fi 시안</li>
+  <li><strong>정산 수수료율 정책 엑셀</strong> — <a href="https://docs.google.com/spreadsheets/d/xxxx-settlement-fee" target="_blank" rel="noopener">https://docs.google.com/spreadsheets/d/xxxx-settlement-fee</a> — 파트너 등급별 수수료율 및 정산 주기 정의</li>
+</ul>
+
+<!-- ================= 에픽 ================= -->
+<h2>에픽</h2>
+<table class="spec">
+  <tr><th>에픽</th><td>epic-partner-settlement-summary (파트너 정산 요약 대시보드)</td></tr>
+  <tr><th>목적</th><td>파트너가 정산 내역을 일일이 훑지 않고도 기간별 정산 규모와 처리 현황을 한눈에 파악할 수 있게 한다.</td></tr>
+  <tr><th>주요 범위 (In-Scope)</th><td>기간 탭(이번달/전월/전분기) 전환, 정산 예정 금액·처리 완료율·상태별 건수 요약 카드</td></tr>
+  <tr><th>제외 범위 (Out-of-Scope)</th><td>정산 내역 목록 조회 및 기간·상태 필터(<code>canvas-partner-settlement-list.html</code> 로 분리), 건별 상세 산출 근거 확인(<code>canvas-partner-settlement-detail.html</code> 로 분리), 정산 추이 차트(TrendSparkline) 실제 구현(1단계에서는 디자인 시스템 미보유 사실만 기록하고, 공용 편입 여부·구현은 후속 확정)</td></tr>
+  <tr><th>완료 기준</th><td>파트너가 기간 탭을 전환해 해당 기간의 정산 예정 총액·처리 완료율·상태별 건수를 한눈에 확인할 수 있어야 한다.</td></tr>
+</table>
+
+<!-- ================= 유저스토리 ================= -->
+<h2>유저스토리</h2>
+<ul class="story-list">
+  <li>
+    <span class="story-name">story-settlement-summary (파트너가 이번 달 정산 현황을 요약해서 확인한다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 이번 달 정산 데이터가 있는 파트너가 조회 화면에 접속했고, <b>When</b> 요약 영역을 확인하면, <b>Then</b> 이번 달 정산 총액·상태별 건수가 한눈에 요약되어 표시된다.</li>
+    </ul>
+  </li>
+</ul>
+
+<!-- ================= 화면(디자인) ================= -->
+<h2>화면(디자인)</h2>
+<p class="meta">design-system/admin-partner 컴포넌트를 참조하여 구성. 컴포넌트 태깅은 요소 앞 HTML 주석과 디스크립션 병기 두 곳에 남긴다(one-canvas-rule.md). 화면 위 번호(①②③)는 디스크립션의 번호와 1:1로 대응한다. 요약 대시보드는 정산 내역 목록과 <strong>독립적으로</strong> 동작한다 — 목록의 조회 조건에 영향을 주지도, 받지도 않는다.</p>
+
+<div class="screens-main">
+
+  <section class="screen-block" id="screen-summary">
+    <div class="screen-title">
+      <span class="screen-num">화면 1</span>
+      <h3>settlement-summary <span class="kr">(정산 요약 대시보드)</span></h3>
+      <span class="badge">story-settlement-summary</span>
+    </div>
+
+    <div class="screen-mock">
+
+      <div class="num-region">
+        <span class="num-badge">1</span>
+        <!-- component: SegmentedTabs | story: Navigation/SegmentedTabs (src/components/navigation/segmentedTabs/segmentedTabs.stories.tsx) -->
+        <div class="ds-segtabs" id="periodTabs">
+          <button class="active" data-period="thisMonth">이번달</button>
+          <button data-period="lastMonth">전월</button>
+          <button data-period="lastQuarter">전분기</button>
+        </div>
+      </div>
+
+      <div class="card-row" style="margin-top:18px;">
+        <div class="num-region" style="margin-top:0;">
+          <span class="num-badge">2</span>
+          <!-- component: Card | story: Layout/Card (src/components/layout/card/card.stories.tsx) -->
+          <div class="ds-card">
+            <div class="card-label">정산 예정 금액</div>
+            <div class="card-value" id="statAmount">3,240,000원</div>
+          </div>
+        </div>
+        <div class="num-region" style="margin-top:0;">
+          <span class="num-badge">3</span>
+          <!-- component: Card | story: Layout/Card (src/components/layout/card/card.stories.tsx) -->
+          <div class="ds-card">
+            <div class="card-label">처리 완료율</div>
+        <!-- component: ProgressBar | story: Display/ProgressBar (src/components/display/progressBar/progressBar.stories.tsx) -->
+            <div class="ds-progress">
+              <div class="track"><div class="fill" id="progressFill" style="width:72%;"></div></div>
+              <span class="txt"><span class="current" id="progressText">72%</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="num-region" style="margin-top:0;">
+          <span class="num-badge">4</span>
+          <!-- component: Card | story: Layout/Card (src/components/layout/card/card.stories.tsx) -->
+          <div class="ds-card">
+            <div class="card-label">상태별 건수</div>
+            <!-- component: Tag | story: Display/Tag (src/components/display/tag/tag.stories.tsx) -->
+            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+              <span class="ds-tag" id="cntDone">완료 8건</span>
+              <span class="ds-tag" id="cntWait">대기 3건</span>
+              <span class="ds-tag" id="cntHold">보류 1건</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="num-region">
+        <span class="num-badge proposed">5</span>
+        <!-- component: TrendSparkline (신규 필요 — design-system에 없음) | story: 없음 (디자인 시스템 미보유 — 대응 컴포넌트 파일 없음) -->
+        <div class="ds-card proposed-region">
+          <div class="card-label">최근 6개월 정산 추이</div>
+          <svg height="48" style="margin-top:8px;" viewBox="0 0 260 48" width="100%">
+            <polyline fill="none" points="0,36 40,30 80,32 120,20 160,24 200,10 260,14" stroke="#dc6803" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></polyline>
+            <circle cx="260" cy="14" fill="#dc6803" r="3"></circle>
+          </svg>
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-500); margin-top:4px;">
+            <span>2월</span><span>3월</span><span>4월</span><span>5월</span><span>6월</span><span>7월</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="screen-desc">
+      <h4>UI 디스크립션 — settlement-summary (정산 요약 대시보드)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>기간 탭</strong> — SegmentedTabs로 이번달/전월/전분기를 전환하면 아래 카드 3종이 함께 갱신된다.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">SegmentedTabs</span> <code>navigation-segmentedtabs--default</code></span>
+          </div></div></li>
+        <li><span class="num">2</span><div><strong>정산 예정 금액</strong> — 선택한 기간 동안 파트너에게 지급될 정산 예정 총액.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">Card</span> <code>layout-card--form-card</code></span>
+          </div></div></li>
+        <li><span class="num">3</span><div><strong>처리 완료율</strong> — 전체 정산 건 중 완료 처리된 비율을 ProgressBar로 시각화한다.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">Card</span> <code>layout-card--form-card</code></span>
+            <span class="pair"><span class="tag">ProgressBar</span> <code>display-progressbar--in-progress</code></span>
+          </div></div></li>
+        <li><span class="num">4</span><div><strong>상태별 건수</strong> — 완료/대기/보류 건수를 Tag로 요약해 보여준다.
+          <div class="tag-row">
+            <span class="pair"><span class="tag">Card</span> <code>layout-card--form-card</code></span>
+            <span class="pair"><span class="tag">Tag</span> <code>display-tag--multiple</code></span>
+          </div></div></li>
+        <li><span class="num proposed">5</span><div><strong>정산 추이</strong> — 최근 6개월 정산 예정 금액 추이를 미니 라인 차트로 보여준다. <em>(디자인 시스템 미보유)</em>
+          <div class="tag-row">
+            <span class="pair"><span class="tag proposed">TrendSparkline (신규 필요)</span></span>
+          </div></div></li>
+      </ol>
+      <p class="new-component-note has-proposal"><strong>디자인 시스템 미보유:</strong> <span class="proposed-name">TrendSparkline</span> — 5번 영역(정산 추이)에 필요한 미니 라인 차트 컴포넌트. design-system/admin-partner에 차트/그래프 계열 컴포넌트가 없다. 나머지(SegmentedTabs, Card, ProgressBar, Tag)는 기존 컴포넌트로 구성. 디자인 시스템에 공용으로 편입할지, 이 화면 전용(page-local) 단발성으로 만들지는 디자인 시스템 트랙에서 별도 판단한다.</p>
+    </div>
+  </section>
+
+</div>
+
+<!-- ================= 우측 플로팅 디스크립션 패널 =================
+     화면 아래 .screen-desc 가 원본이고, 이 패널은 현재 보고 있는 화면의
+     디스크립션을 복제해 보여준다. 토글로 접었다 펼 수 있다. -->
+<aside class="desc-panel" id="descPanel">
+  <div class="desc-panel__head">
+    <span class="desc-panel__label">디스크립션</span>
+    <span class="desc-panel__screen" id="descPanelScreen">—</span>
+    <button class="desc-panel__toggle" id="descPanelToggle" type="button" aria-expanded="true">접기</button>
+  </div>
+  <div class="desc-panel__body" id="descPanelBody"></div>
+</aside>
+
+<script>
+  // ---- 우측 플로팅 디스크립션 패널 ----
+  // 화면 아래 .screen-desc(원본)를 복제해 패널에 띄운다. 원본은 CSS로 숨겨져 있다.
+  (function initDescPanel() {
+    const panel = document.getElementById('descPanel');
+    const body = document.getElementById('descPanelBody');
+    const screenLabel = document.getElementById('descPanelScreen');
+    const toggle = document.getElementById('descPanelToggle');
+    const blocks = Array.from(document.querySelectorAll('.screen-block'));
+    if (!panel || !blocks.length) return;
+
+    let activeId = null;
+    function render(block) {
+      if (!block || block.id === activeId) return;
+      activeId = block.id;
+      const num = block.querySelector('.screen-num');
+      const title = block.querySelector('.screen-title h3');
+      screenLabel.textContent =
+        (num ? num.textContent + ' · ' : '') + (title ? title.textContent.trim() : '');
+      const desc = block.querySelector('.screen-desc');
+      body.innerHTML = '';
+      if (desc) body.appendChild(desc.cloneNode(true));
+      body.scrollTop = 0;
+    }
+
+    // 뷰포트에서 가장 많이 보이는 화면 블록을 활성으로 삼는다
+    const ratios = new Map();
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((e) => ratios.set(e.target, e.intersectionRatio));
+      let best = null, bestRatio = 0;
+      ratios.forEach((r, el) => { if (r > bestRatio) { bestRatio = r; best = el; } });
+      if (best) render(best);
+    }, { threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] });
+    blocks.forEach((b) => observer.observe(b));
+
+    render(blocks[0]);
+
+    toggle.addEventListener('click', () => {
+      const collapsed = panel.classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '펼치기' : '접기';
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+  })();
+
+  // ---- 화면 1: 요약 대시보드 탭 인터랙션 ----
+  const PERIOD_DATA = {
+    thisMonth: { amount: '3,240,000원', progress: 72, done: 8, wait: 3, hold: 1 },
+    lastMonth: { amount: '4,110,000원', progress: 100, done: 12, wait: 0, hold: 0 },
+    lastQuarter: { amount: '11,860,000원', progress: 96, done: 34, wait: 1, hold: 1 },
+  };
+  document.querySelectorAll('#periodTabs button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#periodTabs button').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const data = PERIOD_DATA[btn.dataset.period];
+      document.getElementById('statAmount').textContent = data.amount;
+      document.getElementById('progressFill').style.width = data.progress + '%';
+      document.getElementById('progressText').textContent = data.progress + '%';
+      document.getElementById('cntDone').textContent = '완료 ' + data.done + '건';
+      document.getElementById('cntWait').textContent = '대기 ' + data.wait + '건';
+      document.getElementById('cntHold').textContent = '보류 ' + data.hold + '건';
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    # 테스트가 운영 스키마(one-tool)를 건드리지 않도록 별도 스키마로 분리한다.
+    # 이 스키마는 미리 만들어져 있어야 한다: CREATE DATABASE `one-tool-test`;
+    #
+    # 주의: 파일명을 application.yml로 두면 main의 application.yml을 classpath에서
+    # 가려버려(merge 아님) sql.init 설정까지 함께 사라진다.
+    # 반드시 profile 파일로 두고 @ActiveProfiles("test")로 활성화한다.
+    url: jdbc:mysql://${DB_HOST:YOUR_DB_HOST}:3306/${TEST_DB_NAME:one-tool-test}?characterEncoding=utf8

@@ -1,0 +1,1792 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>통합 캔버스 — 장바구니 담긴 상품 가격 변동 알림 (App)</title>
+<meta name="canvas-updated-at" content="2026-07-31T16:54:47+09:00">
+<style>
+  /* ============================================================
+     색·타이포 토큰: design-system/app `src/tokens/primitives.ts`
+     · `src/tokens/typography.ts` 실값을 CSS 변수로 옮긴 것.
+     하드코딩 금지 — 화면 스타일은 아래 변수만 사용한다.
+     ※ 팔레트에 green 계열이 없다(primitives.ts는 gray_neutral·blue·base·red·orange 5계열).
+       따라서 가격 인하는 blue_500, 인상은 red_500으로 표기한다.
+     ※ 타이포 매핑: headline1=18 / body1=16 / body2=15 / label1=14 / label2=13
+       / caption1=12 / caption2=11, line-height 135%, letter-spacing -0.25px
+     ============================================================ */
+  :root {
+    /* gray_neutral */
+    --g25:  #fcfcfd; --g50:  #f9fafb; --g100: #f3f4f6; --g150: #eaecf0;
+    --g200: #e5e7eb; --g300: #d2d6db; --g400: #9da4ae; --g500: #6c737f;
+    --g600: #4d5761; --g700: #384250; --g800: #1f2a37; --g900: #111927; --g950: #0d121c;
+    /* blue */
+    --blue25: #f5faff; --blue50: #eff8ff; --blue100: #d1e9ff; --blue400: #53b1fd;
+    --blue500: #2e90fa; --blue600: #1570ef;
+    /* red */
+    --red25: #fffbfa; --red50: #fef3f2; --red100: #fee4e2; --red500: #f04438; --red600: #d92d20;
+    /* orange (NoticeBox CTA · 미보유 표기 겸용) */
+    --or25: #fffcf5; --or50: #fffaeb; --or100: #fef0c7; --or200: #fedf89; --or300: #fec84b;
+    --or400: #fdb022; --or500: #f79009; --or600: #dc6803; --or700: #b54708;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    max-width: 940px; margin: 40px auto; padding: 0 24px 96px;
+    line-height: 1.6; color: #1c1f24;
+  }
+  h1 { font-size: 22px; border-bottom: 2px solid #1c1f24; padding-bottom: 12px; }
+  h2 {
+    font-size: 17px; margin-top: 48px; padding: 8px 12px;
+    background: var(--g50); border-left: 4px solid var(--blue500);
+  }
+  .meta { color: var(--g500); font-size: 13px; margin-bottom: 16px; }
+  table.spec { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.spec th, table.spec td { border: 1px solid var(--g200); padding: 8px 10px; text-align: left; vertical-align: top; }
+  table.spec th { background: var(--g50); width: 150px; }
+  table.spec ul { margin: 0; padding-left: 18px; }
+  table.spec li { margin-bottom: 4px; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: .92em; background: var(--g100); padding: 1px 4px; border-radius: 3px; }
+
+  ul.story-list { padding-left: 20px; }
+  ul.story-list > li { margin-bottom: 16px; font-size: 14px; color: var(--g700); }
+  ul.story-list .story-name { display: block; font-weight: 600; color: var(--g900); margin-bottom: 2px; }
+  ul.story-list .gwt { margin: 4px 0 0; padding-left: 16px; }
+  ul.story-list .gwt li { margin-bottom: 4px; font-size: 13px; }
+  ul.story-list .gwt b { color: var(--g900); font-weight: 600; }
+
+  /* ===== 화면 블록: 화면(풀사이즈) + 바로 아래 디스크립션 ===== */
+  .screens-main { display: flex; flex-direction: column; gap: 56px; margin-top: 20px; }
+  .screen-block { scroll-margin-top: 20px; }
+  .screen-title { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .screen-title .screen-num { font-size: 13px; font-weight: 700; color: var(--g500); }
+  .screen-title h3 { font-size: 16px; margin: 0; color: var(--g900); }
+  .screen-title h3 .kr { font-weight: 400; color: var(--g600); }
+  .screen-title .badge-doc { font-size: 11px; color: var(--g500); border: 1px solid var(--g200); border-radius: 4px; padding: 1px 6px; }
+  .screen-mock { border: 1px solid var(--g200); border-radius: 10px; padding: 28px 20px; background: var(--g25); }
+  .screen-mock:not(.two-up) > .phone { margin: 0 auto; }
+  .screen-mock.two-up { display: flex; gap: 44px; justify-content: center; flex-wrap: wrap; }
+  .frame-caption { text-align: center; font-size: 12px; color: var(--g500); margin: 10px 0 0; }
+
+  /* ===== 번호 주석(annotation) ===== */
+  .num-region { position: relative; }
+  .num-badge {
+    position: absolute; z-index: 41;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--g900); color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 3px #fff;
+    top: -10px; left: -10px;
+  }
+  /* 배지는 항상 프레임 좌측 여백(프레임 기준 -10px)에 놓는다.
+     래퍼 padding이 쌓일수록 left를 더 당겨야 한다:
+       full-width 영역        → left:-10px (기본)
+       padding 0 20px 안      → .inset  = -30px
+       그 안의 카드 padding 16 → .inset2 = -46px */
+  .num-badge.inset { left: -30px; }
+  .num-badge.inset2 { left: -46px; }
+  /* 오버레이 레이어(overflow:hidden) 안의 영역은 배지를 프레임 밖으로 뺄 수 없다 —
+     빼면 레이어에 잘린다. 이 경우만 배지를 시트 안쪽에 얹는다. */
+  .num-badge.inside { top: 10px; left: 10px; }
+  .num-badge.proposed { background: var(--or600); }
+  .num-badge.shared-needed { background: var(--blue600); }
+
+  /* ===== 프레임 안 컴포넌트 태깅(tag-note)
+         주석 표기를 HTML 이스케이프해 "보이는 텍스트"로 렌더한다(모노스페이스 한 줄).
+         한 번호 영역에 컴포넌트가 여럿이면 " / " 로 이어 붙인다. ===== */
+  .tag-note { font-size: 11px; color: var(--g500); font-family: "SF Mono", Menlo, monospace; margin: 0 0 6px; }
+  .phone .tag-note { padding: 0 20px; margin: 6px 0 4px; line-height: 1.5; overflow-wrap: anywhere; }
+  /* 부모가 이미 좌우 padding을 가진 컨텍스트(카드 내부 / 시트 본문 등) */
+  .phone .tag-note.flush { padding-left: 0; padding-right: 0; }
+  /* 토스트류는 폭이 max-content/고정이라 절대배치로 바로 위에 얹는다(토스트 폭·모양 불변) */
+  .app-toast > .tag-note { position: absolute; left: 0; right: 0; bottom: 100%; margin: 0 0 4px; padding: 0 0 0 14px; }
+  .app-toast.push > .tag-note { position: static; }
+
+  /* ===== 디스크립션 (화면당) ===== */
+  .screen-desc { margin-top: 14px; border: 1px solid var(--g200); border-radius: 10px; padding: 16px 20px; background: var(--g50); }
+  .screen-desc h4 { font-size: 12.5px; margin: 0 0 12px; color: var(--g500); text-transform: uppercase; letter-spacing: .04em; }
+  .desc-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .desc-legend li { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; color: var(--g700); }
+  .desc-legend .num {
+    flex: 0 0 auto; margin-top: 2px; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--g900); color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .desc-legend .num.proposed { background: var(--or600); }
+  .desc-legend .num.shared-needed { background: var(--blue600); }
+  .desc-legend strong { color: var(--g900); }
+  .new-component-note { margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--g300); font-size: 12.5px; color: var(--g600); }
+  .new-component-note strong { color: var(--g800); }
+  .new-component-note .proposed-name { color: var(--or700); font-weight: 600; }
+  .new-component-note .shared-name { color: var(--blue600); font-weight: 600; }
+
+  /* ===== 보이는 태그 칩 — 디스크립션 영역 안에만 둔다 ===== */
+  .tag-row { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; align-items: center; }
+  .tag-row .pair { display: inline-flex; align-items: center; gap: 4px; }
+  .tag {
+    font-family: "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.5;
+    background: var(--g100); color: var(--g800);
+    border: 1px solid var(--g200); border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+  }
+  .tag-row .pair > code {
+    font-family: "SF Mono", Menlo, monospace; font-size: 10.5px;
+    background: transparent; color: var(--g500); padding: 0; white-space: nowrap;
+  }
+  .tag.new { background: var(--or25); border-color: var(--or400); color: var(--or700); }
+  .tag.shared { background: var(--blue25); border-color: var(--blue400); color: var(--blue600); }
+  .tag.local { background: #fff; border-color: var(--g300); color: var(--g600); }
+  .tag.sample { background: #fff; border-style: dashed; color: var(--g500); }  /* 범례 예시 — 실제 태깅 아님 */
+
+  /* ===== 디자인 시스템 미보유(신규 필요·공용화 필요) 영역 — 화면 안에서는 색+점선으로만 구분 ===== */
+  .proposed-region { outline: 1px dashed var(--or400); outline-offset: -1px; background: rgba(255,250,235,.55); }
+  .shared-needed-region { outline: 1px dashed var(--blue400); outline-offset: -1px; }
+
+  /* ============================================================
+     앱 프레임 (max-width 480px 앱, 목업은 375px 뷰포트 기준)
+     ============================================================ */
+  .phone {
+    width: 375px; flex: 0 0 375px; position: relative; background: #fff;
+    border: 1px solid var(--g300); border-radius: 20px;
+    font-family: Pretendard, -apple-system, "Apple SD Gothic Neo", sans-serif;
+    letter-spacing: -0.25px; color: var(--g900); line-height: 1.35;
+  }
+  .phone-screen { position: relative; border-radius: 19px; overflow: visible; }
+  .phone p, .phone span, .phone div, .phone button, .phone li { letter-spacing: -0.25px; }
+
+  /* --- Header (height 50 / padding 14px 18px / title body1.semibold) --- */
+  .app-header { height: 50px; padding: 14px 18px; display: flex; align-items: center; position: relative; background: #fff; border-radius: 19px 19px 0 0; }
+  .app-header .h-title { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); font-size: 16px; font-weight: 600; white-space: nowrap; }
+  .app-header .h-right { margin-left: auto; display: flex; gap: 18px; align-items: center; }
+  .app-header .h-left { display: flex; align-items: center; }
+
+  /* --- Button (size별 padding/폰트/radius, color별 bg/색 — buttonStyle.ts 실값) --- */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: none; cursor: pointer; font-family: inherit; transition: background-color .3s; }
+  .btn:disabled { cursor: not-allowed; }
+  .s-xs  { padding: 9px 12px;  font-size: 11px; font-weight: 500; line-height: 127.3%; letter-spacing: .342px; border-radius: 6px; }
+  .s-sm  { padding: 9px 12px;  font-size: 13px; font-weight: 600; line-height: 135%; border-radius: 7px; }
+  .s-md  { padding: 11px 14px; font-size: 14px; font-weight: 600; line-height: 135%; border-radius: 6px; }
+  .s-lg  { padding: 12px 16px; font-size: 15px; font-weight: 600; line-height: 135%; border-radius: 8px; }
+  .s-xl  { padding: 14px 18px; font-size: 16px; font-weight: 600; line-height: 135%; border-radius: 8px; }
+  .s-2xl { padding: 16px 22px; font-size: 18px; font-weight: 600; line-height: 135%; border-radius: 10px; }
+  .c-black { background: var(--g950); color: #fff; }
+  .c-black:disabled { background: var(--g100); color: var(--g400); box-shadow: inset 0 0 0 1px var(--g150); }
+  .c-white { background: #fff; color: var(--g900); }
+  .c-whiteWithLine { background: #fff; color: var(--g900); border: 1px solid var(--g900); }
+  .c-greyOutLine { background: #fff; border: 1px solid var(--g300); color: var(--g700); }
+  .c-greyOutLine:disabled { color: var(--g400); border: 1px solid var(--g200); }
+  .c-skyblue { background: var(--blue50); color: var(--blue500); }
+  .c-deepBlue { background: var(--blue500); color: #fff; }
+  .c-grey { background: var(--g100); border: 1px solid var(--g200); color: var(--g700); }
+  .btn-full { width: 100%; }
+
+  /* --- Badge (radius 2px, variant별 badgeStyle.ts 실값) --- */
+  .badge { display: inline-flex; align-items: center; border-radius: 2px; white-space: nowrap; }
+  .b-onSale      { padding: 4px 6px; font-size: 12px; font-weight: 600; color: #fff; background: var(--blue500); }
+  .b-pendingSale { padding: 4px 6px; font-size: 12px; font-weight: 600; color: #fff; background: var(--g900); }
+  .b-saleClosed  { padding: 4px 6px; font-size: 12px; font-weight: 600; color: var(--g500); background: var(--g300); }
+  .b-revenue     { padding: 4px 6px; font-size: 12px; font-weight: 700; color: var(--blue500); background: var(--blue50); }
+
+  /* --- NoticeBox(variant=CTA): padding 16/20, orange_50 bg, orange_200 bottom line, radius 0 --- */
+  .noticebox-cta { padding: 16px 20px; background: var(--or50); border-bottom: 1px solid var(--or200); display: flex; flex-direction: column; gap: 16px; }
+  .noticebox-cta .nb-title { font-size: 16px; font-weight: 700; color: var(--or500); }
+  .noticebox-cta .nb-desc { font-size: 14px; font-weight: 400; color: var(--g700); }
+  .noticebox-cta .nb-btn { border: none; border-radius: 24px; background: var(--or100); padding: 10px 0; width: 100%; font-size: 16px; font-weight: 700; color: var(--or500); display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font-family: inherit; }
+
+  /* --- NoticeBox 주문 안내형(pill): OrderWrapper 실값
+         GROUP_DELIVERY/CANCEL_UNAVAILABLE/SELLER_PROFILE = blue_50 + blue_500
+         UNAVAILABLE_ADDRESS = red_50 + red_500, 텍스트 13px/500/130% --- */
+  .notice-pill { width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 999px; padding: 6px 0; }
+  .notice-pill.blue { background: var(--blue50); }
+  .notice-pill.red { background: var(--red50); }
+  .notice-pill p { font-size: 13px; font-weight: 500; line-height: 130%; margin: 0; }
+  .notice-pill.blue p { color: var(--blue500); }
+  .notice-pill.red p { color: var(--red500); }
+  .notice-pill.tappable { cursor: pointer; }
+
+  /* --- Switch (44x24 track / 18x18 knob / on: blue_500) --- */
+  .switch { width: 44px; height: 24px; border-radius: 999px; padding: 4px; background: var(--g200); border: none; cursor: pointer; flex-shrink: 0; display: block; transition: background-color .2s; }
+  .switch .knob { width: 18px; height: 18px; border-radius: 999px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,.25); display: block; transition: transform .2s; }
+  .switch.on { background: var(--blue500); }
+  .switch.on .knob { transform: translateX(18px); }
+
+  /* --- CheckboxInput (20x20 / radius 6 / checked bg gray_neutral_900 / label body2.medium) --- */
+  .ds-checkbox { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .ds-checkbox .box { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--g300); background: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .ds-checkbox .box svg { opacity: 0; }
+  .ds-checkbox.on .box { background: var(--g900); border-color: transparent; }
+  .ds-checkbox.on .box svg { opacity: 1; }
+  .ds-checkbox .lbl { font-size: 15px; font-weight: 500; color: var(--g700); }
+
+  /* --- SectionTitle (headline1.bold) / ListText (label1.medium g500) / ThinDivider / InfoRow --- */
+  .section-title { font-size: 18px; font-weight: 700; color: var(--g800); margin: 0; }
+  .list-text { font-size: 14px; font-weight: 500; color: var(--g500); margin: 0; }
+  .thin-divider { border: none; border-top: 1px solid var(--g200); margin: 0; }
+  .thin-divider.dark { border-top-color: var(--g300); }
+  .info-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+
+  /* --- AmountSummaryBox: plain(g50/radius6) / accent(좌측 3px 강조선 + 틴트, radius 0 6 6 0)
+         텍스트는 headline1.semibold 고정, 색은 호출부 주입 --- */
+  .amount-box { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px; }
+  .amount-box p { font-size: 18px; font-weight: 600; margin: 0; }
+  .amount-box.plain { background: var(--g50); border-radius: 6px; }
+  .amount-box.accent { border-radius: 0 6px 6px 0; }
+  .amount-box.accent.blue { background: var(--blue50); border-left: 3px solid var(--blue500); }
+  .amount-box.accent.red { background: var(--red50); border-left: 3px solid var(--red500); }
+
+  /* ============================================================
+     장바구니 페이지 실값 (app/cart/** — 페이지 전용, 참조 전용)
+       cartClientStyle: Wrapper bg gray_neutral_100 / ListWrapper gap 16, padding 0 20
+       CartItem.Wrapper: padding 16 / white / radius md(8)
+       CartItemBox: 썸네일 60x60 radius xs(4) / 상품명·옵션 label1.regular
+                    PriceBox bg g50 radius sm(6) padding 12
+       CartBottom: gap 20 / padding 20 20 100 / 총결제금액 headline1.semibold blue_500
+       AllSelectHeader: sticky / padding 10 20 / gap 16
+       CommonButtonWrapper(shared/style/formPageLayout.ts): fixed bottom / padding 10 20 / white
+     ============================================================ */
+  .cart-page { background: var(--g100); }
+  .cart-allselect { display: flex; align-items: center; gap: 16px; padding: 10px 20px; background: #fff; }
+  .cart-allselect .del { font-size: 14px; font-weight: 500; color: var(--g500); margin: 0; cursor: pointer; }
+  .vdiv { width: 1px; height: 10px; background: var(--g300); display: block; }
+  .cart-list { display: flex; flex-direction: column; gap: 16px; padding: 0 20px 16px; }
+  .cart-card { width: 100%; padding: 16px; background: #fff; border-radius: 8px; }
+  .cart-group-name { font-size: 16px; font-weight: 600; color: var(--g900); margin: 0; }
+
+  .citem-row { display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; }
+  .citem-head { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+  .citem-head .x { background: none; border: none; padding: 0; display: flex; cursor: pointer; }
+  .citem-info { width: 100%; display: flex; gap: 12px; }
+  .citem-thumb { width: 60px; height: 60px; border-radius: 4px; background: var(--g100); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--g400); }
+  .citem-name { font-size: 14px; font-weight: 400; color: var(--g900); margin: 0; }
+  .citem-option { font-size: 14px; font-weight: 400; color: var(--g500); margin: 0; }
+  .citem-count { display: flex; align-items: center; justify-content: flex-end; width: 100%; }
+  .citem-price { display: flex; align-items: center; justify-content: space-between; background: var(--g50); border-radius: 6px; padding: 12px; }
+  .citem-price .ship { font-size: 13px; font-weight: 500; color: var(--g600); margin: 0; }
+  .citem-price .amount { font-size: 16px; font-weight: 700; color: var(--g800); margin: 0; }
+
+  /* QuantityStepper(variant=bordered): gap 10 / 버튼 24x24 radius 4 border g200 / 값은 무스타일 p(16/400) */
+  .stepper { display: flex; align-items: center; gap: 10px; }
+  .stepper .step { width: 24px; height: 24px; border-radius: 4px; background: #fff; border: 1px solid var(--g200); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+  .stepper .val { font-size: 16px; font-weight: 400; margin: 0; }
+
+  .total-list { display: flex; flex-direction: column; gap: 16px; }
+  .total-list .line { width: 100%; display: flex; justify-content: space-between; }
+  .total-list .pname { font-size: 14px; font-weight: 500; color: var(--g600); margin: 0; }
+  .total-list .pval { font-size: 15px; font-weight: 500; color: var(--g700); margin: 0; }
+  .total-list .tname { font-size: 15px; font-weight: 600; color: var(--g700); margin: 0; }
+  .total-list .tval { font-size: 18px; font-weight: 700; color: var(--g900); margin: 0; }
+
+  .cart-bottom-sum { display: flex; flex-direction: column; gap: 20px; background: #fff; width: 100%; padding: 20px; }
+  .cart-bottom-sum .line { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+  .cart-bottom-sum .fname { font-size: 18px; font-weight: 600; color: var(--g900); margin: 0; }
+  .cart-bottom-sum .fval { font-size: 18px; font-weight: 600; color: var(--blue500); margin: 0; }
+  .cart-bottom-sum .bname { font-size: 15px; font-weight: 500; color: var(--g600); margin: 0; }
+  .cart-bottom-sum .bval { font-size: 16px; font-weight: 600; color: var(--g700); margin: 0; }
+
+  /* CommonButtonWrapper (fixed bottom / padding 10 20 / white) — 프레임 안에서는 하단 고정 바로 표현 */
+  .cart-cta-bar { padding: 10px 20px; background: #fff; width: 100%; border-top: 1px solid var(--g100); border-radius: 0 0 19px 19px; }
+
+  /* --- 신규 필요: PriceChangeAmount (담은가 취소선 → 현재가 + 증감액)
+         공용 269종·페이지전용 264종 어디에도 before→after 가격 비교 표기가 없다. --- */
+  .price-change { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+  .price-change .pc-line { display: flex; align-items: baseline; gap: 6px; }
+  .price-change .pc-base { font-size: 13px; font-weight: 500; color: var(--g400); text-decoration: line-through; }
+  .price-change .pc-now { font-size: 16px; font-weight: 700; color: var(--g800); }
+  .price-change .pc-delta { font-size: 12px; font-weight: 700; }
+  .price-change.down .pc-delta { color: var(--blue500); }
+  .price-change.up .pc-delta { color: var(--red500); }
+
+  /* --- 오버레이 전용 클리핑 레이어: 닫힌 바텀시트가 프레임 밖으로 새지 않게 가둔다.
+         번호 배지는 이 레이어 바깥에 있어 좌측 여백으로 계속 삐져나온다. --- */
+  .overlay-layer { position: absolute; inset: 0; z-index: 30; overflow: hidden; border-radius: 19px; pointer-events: none; }
+  .overlay-layer > * { pointer-events: auto; }
+
+  /* --- Backdrop + 바텀시트(InfoConfirmSheet 골격) --- */
+  .app-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); z-index: 30; opacity: 0; pointer-events: none; transition: opacity .2s; border-radius: 19px; }
+  .app-backdrop.open { opacity: 1; pointer-events: auto; }
+  .app-sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 31; background: #fff; border-radius: 16px 16px 0 0; padding-top: 32px; display: flex; flex-direction: column; gap: 24px; transform: translateY(105%); transition: transform .28s ease-out; }
+  .app-sheet.open { transform: translateY(0); }
+  .sheet-textblock { padding: 0 20px; display: flex; flex-direction: column; gap: 8px; }
+  .sheet-desc { font-size: 15px; font-weight: 400; color: var(--g700); white-space: pre-line; margin: 0; }
+  .sheet-body { padding: 0 20px; display: flex; flex-direction: column; gap: 12px; }
+  .sheet-buttons { padding: 10px 20px 24px; display: flex; gap: 8px; }
+  .sheet-buttons .btn { flex: 1; white-space: nowrap; }
+
+  /* 시트 안 읽기전용 상품 행 (CartItemBox 읽기전용 모드) */
+  .sheet-prow { display: flex; gap: 12px; align-items: center; }
+  .sheet-prow .info { min-width: 0; flex: 1; }
+  .sheet-prow .price-change { flex-shrink: 0; }
+  /* 수량 표기는 숫자와 단위가 갈라지지 않게 묶는다. 상품명·옵션명 자체는 실제 ProductText와
+     같은 word-break: break-all 을 유지한다(itemBoxStyle.ts:29). */
+  .qty-nowrap { white-space: nowrap; }
+
+  /* --- Toast (pill: padding 14/16 radius 4 rgba(0,0,0,.8) label1.medium) --- */
+  .app-toast { position: absolute; left: 50%; transform: translateX(-50%); z-index: 40; opacity: 0; pointer-events: none; transition: opacity .2s; width: max-content; max-width: 88%; }
+  .app-toast.show { opacity: 1; }
+  .app-toast.top { top: 54px; }
+  .app-toast.bottom { bottom: 76px; }
+  .app-toast .msg { padding: 14px 16px; border-radius: 4px; background: rgba(0,0,0,.8); color: #fff; font-size: 14px; font-weight: 500; line-height: 135%; }
+  .app-toast .msg .go { color: var(--blue400); font-size: 14px; font-weight: 600; text-decoration: underline; margin-left: 8px; cursor: pointer; }
+  .app-toast.push { width: 300px; }
+  .app-toast.push .msg { background: #fff; color: var(--g700); border-radius: 8px; box-shadow: 0 4px 8px 3px rgba(0,0,0,.15); display: flex; gap: 10px; align-items: flex-start; }
+  .app-toast.push .p-title { font-size: 14px; font-weight: 500; color: var(--g900); margin: 0; }
+  .app-toast.push .p-desc { font-size: 13px; font-weight: 400; color: var(--g600); margin: 2px 0 0; }
+
+  /* --- 설정 화면 실값 (app/my-page/settings/settingsClientStyle.ts) --- */
+  .set-title { font-size: 18px; font-weight: 700; color: var(--g950); margin: 0; }
+  .set-desc { font-size: 16px; font-weight: 400; line-height: 150%; color: var(--g500); margin: 0; }
+  .alarm-off { padding: 16px; border-radius: 10px; background: var(--blue50); display: flex; gap: 8px; }
+  .alarm-off .n-title { font-size: 16px; font-weight: 700; color: var(--g900); margin: 0; }
+  .alarm-off .n-desc { font-size: 14px; font-weight: 500; color: var(--g700); margin: 2px 0 4px; }
+  .alarm-off .n-btn { display: inline-flex; align-items: center; font-size: 14px; font-weight: 500; color: var(--blue600); cursor: pointer; }
+  /* AgreementToggle 실값: Wrapper padding 16 0 / Title body1.bold / Description label1.regular g400 / RedNotice label2.medium red_500 */
+  .agree-row { padding: 16px 0; display: flex; align-items: center; justify-content: space-between; }
+  .agree-row .a-title { font-size: 16px; font-weight: 700; color: var(--g900); margin: 0; }
+  .agree-desc { font-size: 14px; font-weight: 400; color: var(--g400); padding: 10px 0; margin: 0; }
+  .agree-warn { font-size: 13px; font-weight: 500; color: var(--red500); margin: 0 0 10px; }
+
+  .hidden { display: none !important; }
+  .stack { display: flex; flex-direction: column; }
+  .dim-back { background: var(--g100); border-radius: 19px 19px 0 0; display: flex; align-items: center; justify-content: center; color: var(--g400); font-size: 13px; }
+
+  /* ===== 우측 플로팅 디스크립션 패널 =====
+     화면 아래의 .screen-desc 블록이 원본(작성 대상)이고,
+     패널은 스크롤 위치에 해당하는 블록을 복제해 보여주기만 한다. */
+  .screen-desc { display: none !important; }
+  .desc-panel {
+    position: fixed; top: 72px; right: 20px; z-index: 60;
+    width: 320px; max-height: calc(100vh - 110px);
+    display: flex; flex-direction: column;
+    border: 1px solid #d2d6db; border-radius: 10px;
+    background: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.10);
+  }
+  .desc-panel__head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb; border-radius: 9px 9px 0 0;
+  }
+  .desc-panel.collapsed .desc-panel__head { border-bottom: none; border-radius: 9px; }
+  .desc-panel__label { font-size: 11.5px; font-weight: 700; color: #384250; letter-spacing: .03em; }
+  .desc-panel__screen {
+    flex: 1; min-width: 0; font-size: 11px; color: #6c737f;
+    font-family: "SF Mono", Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .desc-panel__toggle {
+    flex: 0 0 auto; border: 1px solid #d2d6db; background: #fff;
+    cursor: pointer; font-size: 11px; color: #4d5761;
+    border-radius: 6px; padding: 2px 8px; line-height: 1.5;
+  }
+  .desc-panel__body { padding: 14px; overflow-y: auto; overflow-wrap: anywhere; }
+  /* 패널 폭이 좁으므로 태그·스토리북 경로가 잘리지 않고 줄바꿈되게 한다.
+     .pair 가 inline-flex 라 자식이 min-width:auto 로 안 줄어드는 문제를 함께 푼다. */
+  .desc-panel__body .desc-legend li { min-width: 0; }
+  .desc-panel__body .desc-legend li > div { min-width: 0; flex: 1 1 auto; }
+  .desc-panel__body .tag-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .desc-panel__body .tag-row .pair { display: block; max-width: 100%; min-width: 0; }
+  .desc-panel__body .tag-row .pair > * { min-width: 0; max-width: 100%; }
+  .desc-panel__body code { white-space: normal; overflow-wrap: anywhere; }
+  .desc-panel.collapsed .desc-panel__body { display: none; }
+  .desc-panel__body .screen-desc {
+    display: block !important; border: none; border-radius: 0;
+    padding: 0; background: none; margin: 0;
+  }
+  .desc-panel__body .screen-desc h4 { margin-bottom: 10px; }
+  .desc-legend .comp {
+    display: block; margin-top: 3px;
+    font-size: 11px; color: #6c737f;
+    font-family: "SF Mono", Menlo, monospace;
+  }
+  .desc-legend .comp.proposed { color: #b54708; }
+  @media (max-width: 1320px) { .desc-panel { width: 280px; right: 12px; } }
+</style>
+</head>
+<body>
+
+<h1>장바구니 담긴 상품 가격 변동 알림</h1>
+<p class="meta">
+  통합캔버스 · 작성 기준 <code>one-canvas/one-canvas-rule.md</code>(A형 — 화면 있음) ·
+  컴포넌트 태깅 어휘 <code>design-system/app/COMPONENT-CATALOG.md</code> ·
+  아이콘 마크업 <code>design-system/app/ICON-MARKUP.md</code>.
+  화면의 체크박스·수량·버튼·바텀시트·토글은 실제로 클릭하면 동작하는 목업입니다(금액도 함께 재계산됩니다).
+</p>
+
+<!-- ================= 도메인 ================= -->
+<h2>도메인</h2>
+<table class="spec">
+  <tr><th>도메인</th><td><code>cart (장바구니)</code></td></tr>
+  <tr><th>대상 플랫폼</th><td>앱(사용자 대상) → <code>design-system/app</code> 컴포넌트만 참조</td></tr>
+</table>
+
+<!-- ================= 참고 자료 ================= -->
+<h2>참고 자료</h2>
+<ul style="font-size:14px; color:var(--g700); padding-left:20px;">
+  <li><strong>장바구니 아이템 응답 타입</strong> — <code>groupbuy-next src/shared/api/cart/@types/types.ts:15-33</code> — <code>ICartProduct</code> 전량. 금액 필드는 <code>productAmount</code>(행에 찍히는 소계) · <code>originalShippingFee</code> · <code>sellerRevenueAmount?</code> 뿐이고 <strong>담은 시점 가격·담은 시각·정가·할인율 필드가 하나도 없다</strong>. 담기 payload(<code>:3-8</code>)도 가격을 보내지 않는다 — 이 기획의 최대 제약.</li>
+  <li><strong>장바구니 화면 구성</strong> — <code>src/app/cart/cartClient.tsx:368-433</code> · <code>cartClientStyle.ts:5-16</code> — <code>AllSelectHeader</code> → <code>CartItem</code>(배송그룹 카드) → <code>CartItemBox</code>(상품 행) → <code>CartBottom</code>. 페이지 배경 <code>gray_neutral_100</code>, 리스트 <code>gap 16px / padding 0 20px</code>. 하단 탭 없음(<code>layout.tsx:4-9</code>의 <code>isNavMenu={false}</code>).</li>
+  <li><strong>가격 표기의 현행 한계</strong> — <code>src/app/cart/_shared/component/itemBox/itemBox.tsx:73-83</code> — 가격 박스에 배송비와 <code>productAmount</code> 한 줄만 있다. 정가 취소선·할인율·비교 표기를 넣을 슬롯이 없다(상품 상세는 <code>goodsSection1.tsx:119-131</code>에서 3개를 모두 표시한다).</li>
+  <li><strong>가격 변동 시 현행 동작</strong> — <code>src/app/order/orderClient.tsx:255-269</code> · <code>src/shared/locales/ko/chunks/orderPage.json:128-132</code> — 주문 진입 시 서버가 전량 재계산하고 실패하면 “실시간으로 재고가 소진되었거나 판매조건이 변경되어 주문을 완료할 수 없어요”라는 <strong>단일 에러 모달 + <code>router.back()</code></strong>으로 전체를 되돌린다. 어느 상품이 왜 문제인지 알려주지 않는다 — 이 기획이 메우려는 공백.</li>
+  <li><strong>장바구니 캐시 정책</strong> — <code>src/shared/api/cart/queries/queries.ts:5-21</code> · <code>src/app/queryProvider.tsx:14-17</code> — <code>useGetCartList</code>가 전역 <code>staleTime: 5분</code> · <code>refetchOnWindowFocus: false</code>를 그대로 쓴다. 실시간 채널(WebSocket/SSE/<code>refetchInterval</code>)은 0건 → 푸시를 탭해 들어와도 옛 가격이 뜰 수 있다.</li>
+  <li><strong>푸시 발송·수신 경로</strong> — <code>src/shared/hook/useFlutterMessage.ts:6-10</code> · <code>src/shared/constants/flutterMessageKeyScheme.ts</code> · <code>src/shared/api/member/apis.ts:262</code>(<code>POST /member/push-tokens</code>) · 딥링크 수신 <code>src/shared/component/layout/Layout.tsx:123-129</code> — 웹푸시·FCM·service worker·manifest가 전부 없고 <strong>Flutter WebView 브릿지 앱 푸시만</strong> 존재한다.</li>
+  <li><strong>알림 설정 현황</strong> — <code>src/app/my-page/settings/settingsClient.tsx:32-59</code> · <code>src/app/my-page/_shared/components/agreementToggle/agreementToggle.tsx:23-49</code> — 설정 화면의 토글은 마케팅 수신 동의 <strong>단 하나</strong>(<code>PUT /member/me/marketing-agree</code>, <code>src/shared/api/order/apis.ts:70-74</code>)이고, 인앱 알림함·알림 종류별 설정은 없다. OS 권한 꺼짐 안내는 이 페이지에 이미 있다(<code>settingPage.alarm.*</code>).</li>
+  <li><strong>가격 노출 등급 제약</strong> — <code>src/app/goods/goodsClient.tsx:288-291</code> · <code>src/shared/component/unsalablePopup/getUnsalablePopupType.ts:41-55</code> — 채널 상품은 <code>gradePermission.priceVisible === false</code>면 판매가가 응답에서 생략되고 화면이 등급 안내로 대체된다. 금액을 담은 알림의 발송 대상 필터가 필요한 근거.</li>
+</ul>
+
+<!-- ================= 에픽 ================= -->
+<h2>에픽</h2>
+<table class="spec">
+  <tr><th>에픽</th><td><code>epic-cart-price-change-alert (장바구니 담긴 상품 가격 변동 알림)</code></td></tr>
+  <tr><th>목적</th>
+      <td>장바구니에 담아둔 시점과 결제하는 시점 사이의 가격 변화를 구매자가 <strong>결제 전에</strong> 알아차리게 한다. 지금은 장바구니가 현재가만 조용히 갱신해 보여주고, 가격이 오른 경우는 주문 진입 단계에서 “판매조건이 변경되어 주문을 완료할 수 없어요” 한 줄과 함께 전체가 되돌려진다. 인하는 재방문·구매 전환의 기회인데 알리지 않고, 인상은 사유를 모르는 실패로 끝나는 이 두 손실을 함께 회수한다.</td></tr>
+  <tr><th>주요 범위 (In-Scope)</th>
+      <td><ul>
+        <li>장바구니 아이템에 <strong>담은 시점 기준가</strong>를 저장하고 목록 응답에 노출(서버 선행) — 이 값 없이는 이하 전부가 불가능</li>
+        <li>장바구니 상품 행에 “담은 가격(취소선) → 현재 가격 + 증감액” 비교 표기 추가</li>
+        <li>장바구니 상단에 변동 요약 안내 노출, 누르면 변동 상품만 모아 보는 확인 바텀시트</li>
+        <li>구매하기 진입 시 인상 상품이 포함되면 <strong>주문 이동 전에</strong> 변동 확인 단계를 거치게 함(현행 사후 에러 모달을 사전 안내로 앞당김)</li>
+        <li>변동을 확인하면 기준가를 현재가로 갱신해 같은 변동을 반복 노출하지 않음</li>
+        <li>가격이 변동된 시점에 앱 푸시 발송 + 딥링크로 장바구니 진입, 진입 시 장바구니 강제 재조회</li>
+        <li>푸시가 닿지 않는 모바일웹 사용자를 위한 인앱 안내(재진입 시 노출) fallback</li>
+        <li>설정 화면에 “장바구니 가격 변동 알림” 수신 토글(인하·인상 각각) 추가</li>
+      </ul></td></tr>
+  <tr><th>제외 범위 (Out-of-Scope)</th>
+      <td><ul>
+        <li><strong>웹 푸시 · 이메일 · SMS 발송</strong> — 웹푸시/FCM/service worker/manifest가 현 서비스에 전무하고(의존성·파일 0건) Flutter 브릿지 앱 푸시만 존재한다. 채널 확장은 별도 에픽이며, 이번에는 모바일웹은 인앱 안내로만 커버한다.</li>
+        <li><strong>인앱 알림함(알림 리스트 페이지)</strong> — 알림 라우트·API·컴포넌트가 어느 쪽에도 없어 신설 규모가 이 에픽보다 크다. 변동 내역의 열람 창구는 장바구니 자체로 갈음한다.</li>
+        <li><strong>가격 변동 감지·발송 배치의 내부 설계</strong> — 화면이 없는 서버 작업이므로 <code>canvas-app-cart-price-change-batch-noscreen.html</code>(B형)로 분리한다. 이 캔버스는 사용자가 결과를 받는 지점까지만 다룬다.</li>
+        <li><strong>담은 가격으로의 가격 보장(price lock)·자동 쿠폰 보상</strong> — 정산·프로모션 정책 변경이 동반되므로 제외. 이번 범위는 “알리고 확인시키는” 것까지다.</li>
+        <li><strong>재고·판매상태 변동 알림</strong> — 장바구니는 현재 <code>saleStatus</code>를 읽는 코드가 0건이라 품절 표기 자체가 없다. 상태 변동은 별도 에픽(품절/재입고)으로 두고, 이번에는 <strong>가격</strong>만 다룬다.</li>
+        <li><strong>/order 화면의 항목별 실패 사유 표시</strong> — 사전 확인으로 대부분을 걷어내되, 주문 단계의 에러 모달 세분화는 후속 과제로 이관한다.</li>
+        <li><strong>등급별 가격 비노출(<code>priceVisible=false</code>) 회원 대상 발송</strong> — 앱에서 볼 수 없는 금액을 알림으로 노출하는 정책 위반이 되므로 발송 대상에서 제외한다.</li>
+      </ul></td></tr>
+  <tr><th>완료 기준</th>
+      <td><ul>
+        <li>담은 뒤 가격이 바뀐 상품이 장바구니에서 “담은 가격 → 현재 가격”과 증감액으로 구분되어 보이고, 변동 없는 상품은 기존 표기를 그대로 유지한다.</li>
+        <li>상단 요약 안내를 눌러 변동 상품만 모아 보고, 확인하면 표기가 사라지며 같은 변동이 다시 뜨지 않는다.</li>
+        <li>인상 상품이 선택된 상태로 구매하기를 누르면 주문 화면으로 넘어가기 전에 변동 확인 단계가 뜨고, 확인 후에만 주문이 진행된다.</li>
+        <li>앱 사용자는 가격 변동 푸시를 받고 눌렀을 때 장바구니로 진입하며, 이때 목록이 캐시가 아닌 최신 값으로 조회된다.</li>
+        <li>설정에서 인하·인상 알림을 각각 끌 수 있고, 끈 뒤에는 해당 방향의 푸시가 발송되지 않는다(장바구니 내 표기는 유지된다).</li>
+      </ul></td></tr>
+</table>
+
+<!-- ================= 유저스토리 ================= -->
+<h2>유저스토리</h2>
+<ul class="story-list">
+  <li>
+    <span class="story-name">story-cart-price-change-notice (장바구니에 담아둔 상품 가격이 바뀐 것을 구매자가 결제 전에 알아차린다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 담은 시점보다 가격이 내려간 상품이 장바구니에 있고, <b>When</b> 장바구니를 열면, <b>Then</b> 그 행에 담은 가격이 취소선으로, 현재 가격과 내려간 금액이 함께 표시된다.</li>
+      <li><b>Given</b> 담은 시점보다 가격이 올라간 상품이 장바구니에 있고, <b>When</b> 장바구니를 열면, <b>Then</b> 같은 비교 표기가 인상임을 구분하는 색으로 표시된다.</li>
+      <li><b>Given</b> 가격이 변동된 상품이 하나 이상 있고, <b>When</b> 장바구니를 열면, <b>Then</b> 목록 위에 변동 건수 요약 안내가 노출된다.</li>
+      <li><b>Given</b> 담은 뒤 가격이 그대로인 상품만 있고, <b>When</b> 장바구니를 열면, <b>Then</b> 요약 안내와 비교 표기가 모두 노출되지 않고 기존 화면과 동일하다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-cart-price-change-review (여러 상품의 가격 변동을 한 번에 확인하고 결제 여부를 판단한다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 변동 요약 안내가 노출된 장바구니에 있고, <b>When</b> 그 안내를 누르면, <b>Then</b> 변동된 상품만 모아 담은 가격·현재 가격과 합계 변동액을 보여주는 확인 시트가 열린다.</li>
+      <li><b>Given</b> 확인 시트를 보고 있고, <b>When</b> 확인을 누르면, <b>Then</b> 각 상품의 기준가가 현재가로 갱신되어 비교 표기와 요약 안내가 사라진다.</li>
+      <li><b>Given</b> 확인 시트에 인상된 상품이 포함되어 있고, <b>When</b> 그 상품을 선택에서 빼기를 누르면, <b>Then</b> 해당 상품의 선택이 해제되고 결제 금액이 다시 계산된다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-cart-order-price-confirm (가격 인상을 모르는 채로 주문이 실패하는 일을 겪지 않는다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 가격이 오른 상품이 선택된 상태이고, <b>When</b> 구매하기를 누르면, <b>Then</b> 주문 화면으로 이동하기 전에 어떤 상품이 얼마나 올랐는지 알려주는 확인 단계가 뜬다.</li>
+      <li><b>Given</b> 그 확인 단계에서 금액을 받아들였고, <b>When</b> 주문 진행을 누르면, <b>Then</b> 현재 가격 기준으로 주문 화면으로 이동한다.</li>
+      <li><b>Given</b> 그 확인 단계에서 장바구니로 돌아가기를 눌렀고, <b>When</b> 장바구니를 다시 보면, <b>Then</b> 선택 상태가 유지된 채 인상 상품을 빼거나 수량을 조정할 수 있다.</li>
+      <li><b>Given</b> 선택된 상품이 모두 인하 또는 변동 없음이고, <b>When</b> 구매하기를 누르면, <b>Then</b> 추가 확인 없이 주문 화면으로 이동한다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-cart-price-alert-receive (담아둔 상품이 싸진 순간을 놓치지 않고 구매로 이어간다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 앱을 쓰는 구매자의 장바구니 상품 가격이 내려갔고, <b>When</b> 앱 푸시를 받아 누르면, <b>Then</b> 장바구니로 진입하고 목록이 최신 가격으로 다시 조회된다.</li>
+      <li><b>Given</b> 푸시가 발송된 변동 건이 있고, <b>When</b> 장바구니를 보면, <b>Then</b> 그 상품에 변동 표기가 함께 노출되어 푸시 내용과 화면이 일치한다.</li>
+      <li><b>Given</b> 푸시를 받을 수 없는 모바일웹 사용자이고, <b>When</b> 장바구니에 다시 들어오면, <b>Then</b> 그동안 발생한 변동을 인앱 안내로 알려준다.</li>
+      <li><b>Given</b> 가격 비노출 등급의 채널 상품이 장바구니에 있고, <b>When</b> 그 상품의 가격이 변동되면, <b>Then</b> 금액이 담긴 알림을 발송하지 않는다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-cart-price-alert-setting (알림이 과하다고 느낀 구매자가 방향별로 수신을 끈다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 설정 화면에 있는 구매자가 있고, <b>When</b> 가격 인하 알림 또는 가격 인상 알림을 끄면, <b>Then</b> 변경 결과를 안내하고 이후 그 방향의 푸시가 발송되지 않는다.</li>
+      <li><b>Given</b> 두 알림을 모두 끈 상태이고, <b>When</b> 장바구니를 열면, <b>Then</b> 푸시는 오지 않지만 장바구니 안의 변동 표기는 그대로 유지된다.</li>
+      <li><b>Given</b> OS 알림 권한이 꺼진 앱 사용자이고, <b>When</b> 설정 화면을 보면, <b>Then</b> 지금은 알림을 받을 수 없다는 사실과 앱 설정으로 이동하는 안내를 함께 보여준다.</li>
+    </ul>
+  </li>
+</ul>
+
+<!-- ================= 화면(디자인) ================= -->
+<h2>화면(디자인)</h2>
+<p class="meta">
+  <code>design-system/app</code> 공용 컴포넌트를 참조해 구성했다. 요소마다 남긴
+  <code>&lt;!-- component: X(prop=값) --&gt;</code> 는 <code>COMPONENT-CATALOG.md</code> 의 <em>태깅 이름</em>과
+  <em>지정 가능한 값</em> 열에서만 골랐다.
+  회색 번호(<span style="display:inline-flex;width:16px;height:16px;border-radius:50%;background:var(--g900);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;vertical-align:middle;">n</span>)는 기존 공용 컴포넌트 또는 <em>이 화면이 이미 소유한 페이지 전용 컴포넌트</em>로 구성되는 영역,
+  주황 점선 + 주황 번호(<span style="display:inline-flex;width:16px;height:16px;border-radius:50%;background:var(--or600);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;vertical-align:middle;">n</span>)는 <em>지금 그대로는 구현 자산이 없는</em> 영역(신규 제작 또는 기존 컴포넌트의 variant 값 추가),
+  파랑 점선 + 파랑 번호(<span style="display:inline-flex;width:16px;height:16px;border-radius:50%;background:var(--blue600);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;vertical-align:middle;">n</span>)는 <em>기존 페이지 전용 컴포넌트를 공용화해야</em> 하는 영역이다.
+  구분은 색·점선으로만 하고 “신규 필요”·“미보유” 같은 문구는 화면 콘텐츠에 넣지 않는다.
+</p>
+<p class="meta" style="margin-top:-8px;">
+  <strong>세 상태의 구분</strong> — 이 캔버스는 <code>cart</code> 도메인 화면이므로 <code>app/cart/_shared/component/**</code> 의 6종
+  (<code>AllSelectHeader</code> · <code>CartItem</code> · <code>CartItemBox</code> · <code>CartBottom</code> · <code>CartItemSkeleton</code> · <code>Empty</code>)은
+  <strong>태깅 대상이 아니지만 “공용화 필요”도 아니다</strong> — 이 화면이 이미 소유한 컴포넌트이므로 <em>이 화면의 수정 대상</em>이다.
+  다른 페이지의 전용 컴포넌트를 써야 할 때만 파랑(공용화 필요)이 된다(화면 4의 <code>AgreementToggle</code>).
+</p>
+<p class="meta" style="margin-top:-8px;">
+  <strong>태그 칩 읽는 법</strong> — 디스크립션 번호마다 그 영역이 쓰는 컴포넌트를
+  <span class="tag sample">이름(prop=값)</span> 칩으로 표시하고, 옆의 <code>story id</code>는
+  <code>design-system/app</code> 스토리북에서 그 컴포넌트를 여는 값이다
+  (<code>yarn storybook</code> 후 <code>http://localhost:6007/?path=/story/&lt;story id&gt;</code>).
+  칩 표기는 소스의 <code>&lt;!-- component: … --&gt;</code> 주석과 동일하다 — 주석은 2단계 개발용, 칩은 열람용으로 <strong>둘 다</strong> 남긴다.
+  <span class="tag local">참조 전용 …</span>은 이 화면이 소유한 페이지 전용 컴포넌트(수정 대상),
+  <span class="tag shared">공용화 필요 …</span>는 다른 페이지 전용 컴포넌트의 공용 승격 대상,
+  <span class="tag new">신규 필요 …</span>은 공용·페이지 전용 어디에도 없는 것이다.
+</p>
+
+<div class="screens-main">
+
+  <!-- ================================================================
+       화면 1 : cart-price-changed
+       ================================================================ -->
+  <section class="screen-block" id="screen-cart">
+    <div class="screen-title">
+      <span class="screen-num">화면 1</span>
+      <h3>cart-price-changed <span class="kr">(장바구니 — 가격 변동 표시)</span></h3>
+      <span class="badge-doc">story-cart-price-change-notice / review / order-price-confirm</span>
+    </div>
+
+    <div class="screen-mock">
+      <div class="phone">
+        <div class="phone-screen cart-page" style="border-radius:19px;">
+
+          <!-- 1. Header -->
+          <div class="num-region">
+            <span class="num-badge">1</span>
+            <!-- component: Header -->
+            <!-- component: BackSVG -->
+            <div class="app-header">
+              <div class="h-left">
+                <!-- component: BackSVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" cursor="pointer"><path d="M15 18L9 12L15 6" stroke="#111927" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <span class="h-title">장바구니</span>
+            </div>
+          </div>
+
+          <!-- 2. 가격 변동 요약 안내 (variant 값 추가 필요) -->
+          <div class="num-region" id="c-summaryRegion">
+            <span class="num-badge proposed">2</span>
+            <!-- component: NoticeBox(variant=UNAVAILABLE_ADDRESS) -->
+            <!-- variant 값 추가 필요: CART_PRICE_CHANGED — 신규 컴포넌트가 아니다.
+                 NoticeBox의 주문 안내형(pill)은 색만 UNAVAILABLE_ADDRESS(red_50/red_500)에서
+                 갈라지고 문구는 description prop으로 주입된다(noticeBox.tsx:71-82).
+                 즉 스타일 자산은 이미 있고, 의미를 가진 값 이름만 없다.
+                 값 이름을 재사용하면 "주소 오류 안내를 렌더하라"는 지시가 되므로 값 추가가 맞다. -->
+            <!-- component: RedLineInfoIconSVG -->
+            <div style="padding:12px 20px 0; background:#fff;">
+              <div class="notice-pill red tappable proposed-region" id="c-summary">
+                <!-- component: RedLineInfoIconSVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 17 17" fill="none"><path d="M8.50004 5.83301V8.49967M8.50004 11.1663H8.50671M15.1667 8.49967C15.1667 12.1816 12.1819 15.1663 8.50004 15.1663C4.81814 15.1663 1.83337 12.1816 1.83337 8.49967C1.83337 4.81778 4.81814 1.83301 8.50004 1.83301C12.1819 1.83301 15.1667 4.81778 15.1667 8.49967Z" stroke="#F04438" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <p id="c-summaryText">담은 뒤 가격이 바뀐 상품 2개가 있어요</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. 전체선택 / 선택삭제 -->
+          <div class="num-region">
+            <span class="num-badge">3</span>
+            <!-- 참조 전용(page-local): AllSelectHeader — 태깅 대상 아님, 이 화면이 소유 -->
+            <!-- component: CheckboxInput -->
+            <!-- 참조 전용(page-local): AllSelectHeader -->
+            <!-- component: ThinDivider -->
+            <div class="cart-allselect">
+              <!-- component: CheckboxInput -->
+              <span class="ds-checkbox on" id="c-allSelect">
+                <span class="box"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15" fill="none"><path d="M11.6668 4L5.25016 10.4167L2.3335 7.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+                <span class="lbl" style="font-size:14px; color:var(--g700);" id="c-allSelectLabel">전체 선택 (3/3)</span>
+              </span>
+              <span class="vdiv"></span>
+              <p class="del" id="c-multiDelete">선택삭제</p>
+            </div>
+          </div>
+
+          <div class="cart-list" id="c-list">
+
+            <!-- 4. 배송그룹 카드 헤더 + 합배송 안내 -->
+            <div class="num-region">
+              <span class="num-badge inset">4</span>
+              <!-- 참조 전용(page-local): CartItem — 태깅 대상 아님, 이 화면의 수정 대상 -->
+              <!-- component: CheckboxInput -->
+              <!-- component: NoticeBox(variant=GROUP_DELIVERY) -->
+              <div class="cart-card">
+                <!-- 참조 전용(page-local): CartItem -->
+                <!-- component: CheckboxInput -->
+                <!-- component: NoticeBox(variant=GROUP_DELIVERY) -->
+                <div style="margin-bottom:10px;">
+                  <!-- component: CheckboxInput -->
+                  <span class="ds-checkbox on" data-group="A">
+                    <span class="box"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15" fill="none"><path d="M11.6668 4L5.25016 10.4167L2.3335 7.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+                    <span class="cart-group-name">오늘의부엌</span>
+                  </span>
+                </div>
+                <!-- component: NoticeBox(variant=GROUP_DELIVERY) -->
+                <div class="notice-pill blue" style="margin-bottom:16px;">
+                  <!-- component: BlueLineInfoIconSVG -->
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="17" viewBox="0 0 16 17" fill="none"><path d="M7.99998 5.83325V8.49992M7.99998 11.1666H8.00665M14.6666 8.49992C14.6666 12.1818 11.6819 15.1666 7.99998 15.1666C4.31808 15.1666 1.33331 12.1818 1.33331 8.49992C1.33331 4.81802 4.31808 1.83325 7.99998 1.83325C11.6819 1.83325 14.6666 4.81802 14.6666 8.49992Z" stroke="#2E90FA" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <p>함께 주문시 같이 배송되는 상품입니다.</p>
+                </div>
+                <hr class="thin-divider" />
+                <div style="height:16px;"></div>
+
+                <!-- 5. 가격 변동 상품 행 (신규 표기 포함) -->
+                <div class="num-region">
+                  <span class="num-badge proposed inset2">5</span>
+                  <!-- 참조 전용(page-local): CartItemBox — 태깅 대상 아님, 이 화면의 수정 대상 -->
+                  <!-- component: CheckboxInput -->
+                  <!-- component: GreyCloseIconSVG -->
+                  <!-- component: QuantityStepper(variant=bordered) -->
+                  <!-- 신규 필요: PriceChangeAmount — 담은가(취소선) → 현재가 + 증감액.
+                       공용 269종·페이지 전용 264종 어디에도 before→after 가격 비교 표기가 없다. -->
+                  <!-- 참조 전용(page-local): CartItemBox -->
+                  <!-- component: CheckboxInput -->
+                  <!-- component: GreyCloseIconSVG -->
+                  <!-- component: QuantityStepper(variant=bordered) -->
+                  <!-- 신규 필요: PriceChangeAmount -->
+                  <div id="c-rows"></div>
+                </div>
+
+                <!-- 6. 그룹 합계 -->
+                <div class="num-region">
+                  <span class="num-badge inset2">6</span>
+                  <!-- 참조 전용(page-local): CartItem 합계 영역 — 태깅 대상 아님 -->
+                  <!-- component: ThinDivider -->
+                  <!-- 참조 전용(page-local): CartItem(합계) -->
+                  <!-- component: ThinDivider -->
+                  <ul class="total-list" style="list-style:none; margin:0; padding:0;">
+                    <li class="line"><p class="pname">상품 금액</p><p class="pval" id="c-gA-product">21,700원</p></li>
+                    <li class="line"><p class="pname">배송비</p><p class="pval" id="c-gA-ship">3,000원</p></li>
+                    <hr class="thin-divider dark" />
+                    <li class="line"><p class="tname">주문금액</p><p class="tval" id="c-gA-total">24,700원</p></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 7. 변동 없는 상품 그룹(대조) -->
+            <div class="num-region">
+              <span class="num-badge inset">7</span>
+              <!-- 참조 전용(page-local): CartItem / CartItemBox — 태깅 대상 아님, 이 화면이 소유 -->
+              <!-- component: CheckboxInput -->
+              <!-- component: QuantityStepper(variant=bordered) -->
+              <div class="cart-card">
+                <!-- 참조 전용(page-local): CartItem / CartItemBox -->
+                <!-- component: CheckboxInput -->
+                <!-- component: QuantityStepper(variant=bordered) -->
+                <div style="margin-bottom:10px;">
+                  <span class="ds-checkbox on" data-group="B">
+                    <span class="box"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15" fill="none"><path d="M11.6668 4L5.25016 10.4167L2.3335 7.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+                    <span class="cart-group-name">쿨브리즈</span>
+                  </span>
+                </div>
+                <hr class="thin-divider" />
+                <div style="height:16px;"></div>
+                <div id="c-rowsB"></div>
+                <ul class="total-list" style="list-style:none; margin:0; padding:0;">
+                  <li class="line"><p class="pname">상품 금액</p><p class="pval" id="c-gB-product">19,900원</p></li>
+                  <hr class="thin-divider dark" />
+                  <li class="line"><p class="tname">주문금액</p><p class="tval" id="c-gB-total">19,900원</p></li>
+                </ul>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 8. CartBottom (총 결제금액) -->
+          <div class="num-region">
+            <span class="num-badge">8</span>
+            <!-- 참조 전용(page-local): CartBottom — 태깅 대상 아님 -->
+            <!-- component: ThinDivider -->
+            <!-- 참조 전용(page-local): CartBottom -->
+            <ul class="cart-bottom-sum" style="list-style:none; margin:0;">
+              <li class="line"><p class="fname">총 결제금액</p><p class="fval" id="c-total">44,600원</p></li>
+              <hr class="thin-divider" />
+              <li class="line"><p class="bname">상품 금액</p><p class="bval" id="c-totalProduct">41,600원</p></li>
+              <li class="line"><p class="bname">배송비</p><p class="bval" id="c-totalShip">3,000원</p></li>
+            </ul>
+          </div>
+
+          <!-- 9. 하단 CTA -->
+          <div class="num-region">
+            <span class="num-badge">9</span>
+            <!-- component: Button(size=xl, color=black) -->
+            <!-- 래퍼는 공유 스타일 CommonButtonWrapper(shared/style/formPageLayout.ts:34, position fixed
+                 bottom / padding 10px 20px / base_white / z-index 10)다 — 카탈로그 미등재 스타일이므로
+                 컴포넌트 태깅 대상이 아니다. 공용 `Bottom` 컴포넌트를 쓰지 않는다는 뜻이기도 하다. -->
+            <!-- 참조 전용(shared style): CommonButtonWrapper -->
+            <div class="cart-cta-bar">
+              <button class="btn s-xl c-black btn-full" id="c-cta" type="button">구매하기</button>
+            </div>
+          </div>
+
+          <!-- 10. 변동 확인 바텀시트 / 11. Toast -->
+          <div class="overlay-layer">
+            <!-- component: Backdrop -->
+            <div class="app-backdrop" id="c-backdrop"></div>
+            <!-- component: InfoConfirmSheet(align=stretch) -->
+            <div class="app-sheet" id="c-sheet">
+              <div class="num-region">
+                <span class="num-badge inside">10</span>
+                <div class="sheet-textblock">
+                  <!-- component: Backdrop -->
+                  <!-- component: InfoConfirmSheet(align=stretch) -->
+                  <!-- component: SectionTitle -->
+                  <!-- component: AmountSummaryBox(variant=accent) -->
+                  <!-- component: Button(size=xl, color=black) -->
+                  <!-- component: SectionTitle -->
+                  <p class="section-title" id="c-sheetTitle">가격이 바뀐 상품이 있어요</p>
+                  <p class="sheet-desc" id="c-sheetDesc">담은 가격과 지금 가격을 확인해 주세요.</p>
+                </div>
+              </div>
+              <div class="sheet-body" id="c-sheetRows"></div>
+              <div class="sheet-body">
+                <!-- component: AmountSummaryBox(variant=accent) -->
+                <div class="amount-box accent blue" id="c-sheetSum">
+                  <p style="color:var(--g900);">합계 변동</p>
+                  <p style="color:var(--blue500);" id="c-sheetSumValue">-1,000원</p>
+                </div>
+                <!-- component: ListText -->
+                <p class="list-text" style="font-size:13px;">확인하면 담은 가격이 지금 가격으로 갱신돼 같은 안내가 다시 뜨지 않아요.</p>
+              </div>
+              <div class="sheet-buttons">
+                <!-- component: Button(size=xl, color=whiteWithLine) -->
+                <button class="btn s-xl c-whiteWithLine" id="c-sheetSecondary" type="button">인상 상품 빼기</button>
+                <!-- component: Button(size=xl, color=black) -->
+                <button class="btn s-xl c-black" id="c-sheetPrimary" type="button">확인</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- component: Toast -->
+          <div class="app-toast bottom" id="c-toast"><span class="num-badge">11</span><!-- component: Toast --><div class="msg" id="c-toastMsg">가격 변동을 확인했어요</div></div>
+
+        </div>
+      </div>
+      <p class="frame-caption">
+        상단 안내를 누르면 변동 확인 시트가 열립니다 · 체크박스·수량을 바꾸면 금액이 재계산됩니다 ·
+        인상 상품이 선택된 상태로 “구매하기”를 누르면 주문 전 확인 단계가 뜹니다 ·
+        <a href="#" id="c-reset">초기 상태로 되돌리기</a>
+      </p>
+    </div>
+
+    <div class="screen-desc">
+      <h4>디스크립션 — cart-price-changed (장바구니 — 가격 변동 표시)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>헤더</strong> — 공용 <code>Header</code>. <code>/cart</code>는 페이지 전용 헤더가 없고 레이아웃 헤더 설정(<code>shared/component/layout/constants/index.tsx:141-144</code>)의 <code>BackSVG</code> + <code>pageHeader.cart</code> 조합을 그대로 쓴다. <code>layout.tsx</code>가 <code>isNavMenu={false}</code>이므로 <strong>이 화면에는 하단 탭이 없다</strong> — 목업도 같게 두었다.<div class="tag-row"><span class="pair"><span class="tag">Header</span> <code>components-header--back-and-title</code></span><span class="pair"><span class="tag">BackSVG</span> <code>icons-each--back-svg</code></span></div></div></li>
+        <li><span class="num proposed">2</span><div><strong>가격 변동 요약 안내</strong> — 변동 건이 1개 이상일 때만 목록 위에 노출하고, 누르면 10번 확인 시트가 열린다. <code>NoticeBox</code>의 주문 안내형(pill)이 필요한 모양(아이콘 + 단문 + 라운드 배경)과 정확히 같고 문구는 <code>description</code> prop으로 주입되므로 <strong>신규 컴포넌트가 아니다</strong>. 다만 빨간 계열은 <code>UNAVAILABLE_ADDRESS</code>(주소 오류) 값에 묶여 있어 그 값을 그대로 쓰면 의미가 어긋난다 → <em>variant 값 <code>CART_PRICE_CHANGED</code> 추가가 선행</em>돼야 한다(스타일은 동일, 이름만 신설). 인하만 있을 때는 파랑 계열(<code>GROUP_DELIVERY</code>와 같은 <code>blue_50</code>/<code>blue_500</code>)로 전환한다.<div class="tag-row"><span class="pair"><span class="tag new">variant 값 추가 필요 — NoticeBox(CART_PRICE_CHANGED)</span> <code>components-noticebox--unavailable-address</code></span><span class="pair"><span class="tag">RedLineInfoIconSVG</span> <code>icons-each--red-line-info-icon-svg</code></span><span class="pair"><span class="tag">BlueLineInfoIconSVG</span> <code>icons-each--blue-line-info-icon-svg</code></span></div></div></li>
+        <li><span class="num">3</span><div><strong>전체선택 · 선택삭제</strong> — 페이지 전용 <code>AllSelectHeader</code>(sticky, <code>padding 10px 20px</code>)를 그대로 쓴다. 라벨은 <code>전체선택 (선택/전체)</code> 형식이고 선택이 1개 이상일 때만 세로 구분선과 “선택삭제”가 붙는다. 이 기획에서 <strong>변경은 없다</strong>. 체크박스는 공용 <code>CheckboxInput</code>.<div class="tag-row"><span class="pair"><span class="tag local">참조 전용 — cart / AllSelectHeader</span> <code>headers-cart-select--all-selected</code></span><span class="pair"><span class="tag">CheckboxInput</span> <code>atoms-checkboxinput--checked</code></span><span class="pair"><span class="tag">ThinDivider</span> <code>atoms-dividers--thin</code></span></div></div></li>
+        <li><span class="num">4</span><div><strong>배송그룹 카드 헤더</strong> — 페이지 전용 <code>CartItem</code>(흰 카드 <code>padding 16</code> / <code>radius 8</code>)의 그룹 체크박스 + <code>groupName</code>. 브랜드 합배송 그룹이고 상품이 2개 이상일 때 <code>NoticeBox(variant=GROUP_DELIVERY)</code> 안내가 이미 붙는다(<code>cartItem.tsx:95-97</code>) — 2번 요약 안내와 <strong>같은 pill 형태가 한 화면에 공존</strong>하므로, 2번은 목록 밖(상단), 이 안내는 카드 안에 두어 층위를 구분한다.<div class="tag-row"><span class="pair"><span class="tag local">참조 전용 — cart / CartItem</span> <code>cart-cartitem--brand-delivery-group</code></span><span class="pair"><span class="tag">CheckboxInput</span> <code>atoms-checkboxinput--checked</code></span><span class="pair"><span class="tag">NoticeBox(variant=GROUP_DELIVERY)</span> <code>components-noticebox--group-delivery</code></span></div></div></li>
+        <li><span class="num proposed">5</span><div><strong>가격 변동 상품 행</strong> — 페이지 전용 <code>CartItemBox</code>(썸네일 60×60 <code>radius 4</code>, 상품명·옵션 <code>label1.regular</code>, 가격 박스 <code>gray_neutral_50</code>/<code>radius 6</code>/<code>padding 12</code>)의 가격 박스 우측을 확장한다. 현행은 <code>productAmount</code> 한 줄뿐이라(<code>itemBox.tsx:79-82</code>) 비교 표기를 담을 슬롯이 없다 → <em>담은가(취소선 <code>gray_neutral_400</code>) + 현재가(<code>body1.bold</code>) + 증감액</em>을 표시하는 <strong>신규 컴포넌트 <code>PriceChangeAmount</code></strong>가 필요하다. 인하는 <code>blue_500</code>, 인상은 <code>red_500</code>으로 구분한다(토큰 팔레트에 green 계열이 없어 “인하=초록”은 선택지가 아니다). 수량 변경은 공용 <code>QuantityStepper(variant=bordered)</code>가 그대로 담당하고, 수량이 바뀌면 담은가·현재가 소계가 함께 재계산된다.<div class="tag-row"><span class="pair"><span class="tag new">신규 필요 — PriceChangeAmount</span></span><span class="pair"><span class="tag local">참조 전용 — cart / CartItemBox</span> <code>cart-itembox--default</code></span><span class="pair"><span class="tag">QuantityStepper(variant=bordered)</span> <code>atoms-quantitystepper--middle</code></span><span class="pair"><span class="tag">CheckboxInput</span> <code>atoms-checkboxinput--checked</code></span><span class="pair"><span class="tag">GreyCloseIconSVG</span> <code>icons-each--grey-close-icon-svg</code></span></div></div></li>
+        <li><span class="num">6</span><div><strong>그룹 합계</strong> — <code>CartItem</code>이 이미 소유한 상품금액 / 배송비 / 주문금액 3줄(<code>cartItem.tsx:132-157</code>). <strong>합계는 언제나 현재가 기준</strong>이며 담은가 합계를 여기 병기하지 않는다 — 결제 금액이 두 값으로 보이면 어느 쪽이 청구액인지 모호해지기 때문이다. 담은가와의 차이는 2번 안내와 10번 시트에서만 다룬다.<div class="tag-row"><span class="pair"><span class="tag local">참조 전용 — cart / CartItem(합계)</span> <code>cart-cartitem--all-selected</code></span><span class="pair"><span class="tag">ThinDivider</span> <code>atoms-dividers--thin</code></span></div></div></li>
+        <li><span class="num">7</span><div><strong>변동 없는 상품 그룹(대조)</strong> — 담은 뒤 가격이 그대로인 상품은 <strong>기존 표기를 그대로</strong> 유지한다(취소선·증감액을 넣지 않는다). 변동 표기가 “모든 행에 붙는 장식”이 아니라 변화가 있을 때만 나타나는 신호임을 화면에서 확인할 수 있게 대조군으로 배치했다. <code>groupType === 'NONE'</code>이면 배송비 줄 자체가 렌더되지 않는 현행 동작(<code>cartItem.tsx:140-148</code>)도 그대로 반영했다.<div class="tag-row"><span class="pair"><span class="tag local">참조 전용 — cart / CartItem</span> <code>cart-cartitem--no-delivery-group</code></span><span class="pair"><span class="tag local">참조 전용 — cart / CartItemBox</span> <code>cart-itembox--free-shipping</code></span></div></div></li>
+        <li><span class="num">8</span><div><strong>총 결제금액</strong> — 페이지 전용 <code>CartBottom</code>(<code>gap 20</code> / <code>padding 20px 20px 100px</code>, 총 결제금액은 <code>headline1.semibold</code> + <code>blue_500</code>). 선택된 상품의 현재가 기준으로 계산되며 이 기획에서 <strong>구조 변경은 없다</strong>.<div class="tag-row"><span class="pair"><span class="tag local">참조 전용 — cart / CartBottom</span> <code>cart-cartbottom--default</code></span><span class="pair"><span class="tag">ThinDivider</span> <code>atoms-dividers--thin</code></span></div></div></li>
+        <li><span class="num">9</span><div><strong>하단 CTA</strong> — <code>Button(size=xl, color=black)</code> + <code>full</code>. 선택이 0건이면 <code>disabled</code>이고 라벨이 <code>cartPage.buttonText.noSelect</code>로 바뀌는 현행 동작을 유지한다(<code>cartClient.tsx:412-419</code>). 이 기획이 더하는 것은 <strong>클릭 직후의 분기</strong>다 — 선택 안에 인상 상품이 있으면 <code>/order</code> 이동 전에 10번 시트를 확인 모드로 띄우고, 없으면 곧바로 이동한다. 래퍼는 공용 <code>Bottom</code>이 아니라 공유 스타일 <code>CommonButtonWrapper</code>(<code>shared/style/formPageLayout.ts:34</code>)이므로 컴포넌트 태깅 대상이 아니다.<div class="tag-row"><span class="pair"><span class="tag">Button(size=xl, color=black)</span> <code>atoms-button--full-width</code></span></div></div></li>
+        <li><span class="num">10</span><div><strong>변동 확인 바텀시트</strong> — <code>Backdrop</code> + <code>InfoConfirmSheet(align=stretch)</code> 골격에 <code>SectionTitle</code>, 읽기전용 상품 행, <code>AmountSummaryBox(variant=accent)</code>, <code>ListText</code>, <code>Button</code> 2개. 진입 경로가 둘(2번 안내 클릭 / 9번 CTA 클릭)이고 경로에 따라 제목·버튼이 달라진다 — 자세한 두 상태는 화면 2 참조. 확인을 누르면 각 상품의 기준가가 현재가로 갱신되어 2·5번 표기가 사라진다.<div class="tag-row"><span class="pair"><span class="tag">Backdrop</span> <code>atoms-backdrop--default</code></span><span class="pair"><span class="tag">InfoConfirmSheet(align=stretch)</span> <code>popups-infoconfirmsheet--default</code></span><span class="pair"><span class="tag">SectionTitle</span> <code>atoms-sectiontitle--default</code></span><span class="pair"><span class="tag">AmountSummaryBox(variant=accent)</span> <code>atoms-amountsummarybox--accent-blue</code></span><span class="pair"><span class="tag">ListText</span> <code>atoms-listtext--default</code></span><span class="pair"><span class="tag">Button(size=xl, color=black)</span> <code>atoms-button--all-colors</code></span></div></div></li>
+        <li><span class="num">11</span><div><strong>결과 안내</strong> — <code>Toast</code>. 변동 확인·선택 해제·삭제 결과를 하단 토스트로 알린다. <code>Toast</code>의 종류는 발화 시점에 <code>eventEmitter</code>로 넘기는 <code>type</code>(<code>default</code>/<code>warning</code>/<code>error</code>/<code>success</code>/<code>sns</code>/<code>push</code>/<code>addCart</code>/<code>like</code>)이 결정하고 props 문자열 union이 아니어서 <strong>카탈로그의 지정 가능한 값이 <code>—</code></strong>다 → 이름만 태깅한다.<div class="tag-row"><span class="pair"><span class="tag">Toast</span> <code>components-toast--default</code></span></div></div></li>
+      </ol>
+      <p class="new-component-note">
+        <strong>디자인 시스템 미보유:</strong>
+        <span class="proposed-name">PriceChangeAmount</span> — 5번 영역(담은가 취소선 → 현재가 + 증감액). 공용 269종·페이지 전용 264종 <strong>어디에도 before→after 가격 비교 표기가 없다</strong>. 근거: 금액 표기 자산은 <code>AmountSummaryBox</code>(라벨+값 1쌍) · <code>FeeText</code> · <code>InfoRow</code>뿐이고 셋 다 값 하나를 보여주는 구조이며, 정가 취소선 + 할인율 조합은 상품 상세의 페이지 전용 <code>GoodsSection1</code>이 인라인으로 갖고 있어 재사용할 수 없다. 장바구니 행·확인 시트·(후속) 주문 화면 3곳에서 같은 표기가 필요하므로 <strong>공용 atom으로 신설</strong>하는 것이 맞다.
+        <br /><span class="proposed-name">NoticeBox(variant=CART_PRICE_CHANGED)</span> — 2번 영역. <strong>신규 컴포넌트가 아니라 기존 <code>NoticeBox</code>의 variant 값 추가</strong>다(주문 안내형 pill 스타일은 이미 있고 문구는 주입식이다). 빨간 계열이 <code>UNAVAILABLE_ADDRESS</code>에 묶여 있어 값을 재사용하면 의미가 어긋나기 때문이다.
+        <br />그 외 사용 컴포넌트: <code>Header</code>, <code>CheckboxInput</code>, <code>QuantityStepper(variant=bordered)</code>, <code>NoticeBox(variant=GROUP_DELIVERY)</code>, <code>ThinDivider</code>, <code>Button(size=xl)</code>, <code>Backdrop</code>, <code>InfoConfirmSheet(align=stretch)</code>, <code>SectionTitle</code>, <code>AmountSummaryBox(variant=accent)</code>, <code>ListText</code>, <code>Toast</code>, 아이콘 <code>BackSVG</code>·<code>GreyCloseIconSVG</code>·<code>RedLineInfoIconSVG</code>·<code>BlueLineInfoIconSVG</code>·<code>IncreaseIconSVG</code>·<code>DecreaseIconSVG</code>·<code>CheckBoxCheckIconSVG</code>.
+        <br /><strong>이 화면의 수정 대상(페이지 전용, 태깅 아님):</strong> <code>CartItemBox</code>(가격 박스 확장·읽기전용 모드) · <code>CartItem</code>(변동 행 배치) · <code>cartClient</code>(요약 안내·시트·CTA 분기·진입 시 강제 재조회). <code>AllSelectHeader</code>·<code>CartBottom</code>·<code>Empty</code>·<code>CartItemSkeleton</code>은 변경하지 않는다.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       화면 2 : cart-price-change-sheet
+       ================================================================ -->
+  <section class="screen-block" id="screen-sheet">
+    <div class="screen-title">
+      <span class="screen-num">화면 2</span>
+      <h3>cart-price-change-sheet <span class="kr">(가격 변동 확인 바텀시트)</span></h3>
+      <span class="badge-doc">story-cart-price-change-review / order-price-confirm</span>
+    </div>
+
+    <div class="screen-mock two-up">
+
+      <!-- 2-A : 열람 모드 (요약 안내 클릭) -->
+      <div>
+        <div class="phone">
+          <div class="phone-screen">
+            <div class="dim-back" style="height:150px;">장바구니 (뒤 화면)</div>
+            <!-- component: Backdrop -->
+            <div class="app-backdrop open" style="border-radius:19px;"></div>
+            <!-- component: InfoConfirmSheet(align=stretch) -->
+            <div class="app-sheet open" style="position:relative; transform:none; border-radius:16px 16px 19px 19px; z-index:31;">
+
+              <!-- 1. 시트 헤더 -->
+              <div class="num-region">
+                <span class="num-badge">1</span>
+                <div class="sheet-textblock">
+                  <!-- component: Backdrop -->
+                  <!-- component: InfoConfirmSheet(align=stretch) -->
+                  <!-- component: SectionTitle -->
+                  <!-- component: SectionTitle -->
+                  <p class="section-title">가격이 바뀐 상품이 있어요</p>
+                  <p class="sheet-desc">담은 가격과 지금 가격을 확인해 주세요.</p>
+                </div>
+              </div>
+
+              <!-- 2. 변동 상품 행 -->
+              <div class="num-region">
+                <span class="num-badge proposed">2</span>
+                <!-- 참조 전용(page-local): CartItemBox(읽기전용 모드) — 태깅 대상 아님 -->
+                <!-- 신규 필요: PriceChangeAmount -->
+                <!-- 참조 전용(page-local): CartItemBox(readOnly) -->
+                <!-- 신규 필요: PriceChangeAmount -->
+                <div class="sheet-body">
+                  <div class="sheet-prow proposed-region" style="padding:10px;">
+                    <div class="citem-thumb">이미지</div>
+                    <div class="info">
+                      <p class="citem-name">데일리 스텐 텀블러 500ml (2color)</p>
+                      <p class="citem-option">아이보리 / 500ml · <span class="qty-nowrap">1개</span></p>
+                    </div>
+                    <div class="price-change down">
+                      <div class="pc-line">
+                        <span class="pc-base">12,900원</span>
+                        <span class="pc-now">10,900원</span>
+                      </div>
+                      <span class="pc-delta">2,000원 인하</span>
+                    </div>
+                  </div>
+                  <div class="sheet-prow proposed-region" style="padding:10px;">
+                    <div class="citem-thumb">이미지</div>
+                    <div class="info">
+                      <p class="citem-name">실리콘 냄비집게 2P</p>
+                      <p class="citem-option">그레이 · <span class="qty-nowrap">2개</span></p>
+                    </div>
+                    <div class="price-change up">
+                      <div class="pc-line">
+                        <span class="pc-base">9,800원</span>
+                        <span class="pc-now">10,800원</span>
+                      </div>
+                      <span class="pc-delta">1,000원 인상</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 3. 합계 변동 -->
+              <div class="num-region">
+                <span class="num-badge">3</span>
+                <!-- component: AmountSummaryBox(variant=accent) -->
+                <div class="sheet-body">
+                  <!-- component: AmountSummaryBox(variant=accent) -->
+                  <div class="amount-box accent blue">
+                    <p style="color:var(--g900);">합계 변동</p>
+                    <p style="color:var(--blue500);">-1,000원</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4. 안내 문구 -->
+              <div class="num-region">
+                <span class="num-badge">4</span>
+                <!-- component: ListText -->
+                <div class="sheet-body">
+                  <!-- component: ListText -->
+                  <p class="list-text" style="font-size:13px;">확인하면 담은 가격이 지금 가격으로 갱신돼 같은 안내가 다시 뜨지 않아요.</p>
+                </div>
+              </div>
+
+              <!-- 5. 시트 버튼 -->
+              <div class="num-region">
+                <span class="num-badge">5</span>
+                <!-- component: Button(size=xl, color=whiteWithLine) -->
+                <!-- component: Button(size=xl, color=black) -->
+                <div class="sheet-buttons">
+                  <!-- component: Button(size=xl, color=whiteWithLine) -->
+                  <button class="btn s-xl c-whiteWithLine" type="button">인상 상품 빼기</button>
+                  <!-- component: Button(size=xl, color=black) -->
+                  <button class="btn s-xl c-black" type="button">확인</button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+        <p class="frame-caption">2-A · 열람 모드 — 상단 요약 안내를 눌러 열었을 때(인하 1건 + 인상 1건)</p>
+      </div>
+
+      <!-- 2-B : 주문 진입 확인 모드 (구매하기 클릭) -->
+      <div>
+        <div class="phone">
+          <div class="phone-screen">
+            <div class="dim-back" style="height:150px;">장바구니 (뒤 화면)</div>
+            <div class="app-backdrop open" style="border-radius:19px;"></div>
+            <div class="app-sheet open" style="position:relative; transform:none; border-radius:16px 16px 19px 19px; z-index:31;">
+
+              <div class="sheet-textblock">
+                <p class="section-title">가격이 오른 상품이 있어요</p>
+                <p class="sheet-desc">지금 가격으로 주문을 진행할까요?</p>
+              </div>
+
+              <!-- 6. 인상 경고 -->
+              <div class="num-region">
+                <span class="num-badge proposed">6</span>
+                <!-- component: NoticeBox(variant=UNAVAILABLE_ADDRESS) -->
+                <!-- variant 값 추가 필요: CART_PRICE_INCREASED — 화면 1의 2번과 같은 근거 -->
+                <!-- component: NoticeBox(variant=UNAVAILABLE_ADDRESS) -->
+                <!-- component: RedLineInfoIconSVG -->
+                <div class="sheet-body">
+                  <div class="notice-pill red proposed-region">
+                    <!-- component: RedLineInfoIconSVG -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 17 17" fill="none"><path d="M8.50004 5.83301V8.49967M8.50004 11.1663H8.50671M15.1667 8.49967C15.1667 12.1816 12.1819 15.1663 8.50004 15.1663C4.81814 15.1663 1.83337 12.1816 1.83337 8.49967C1.83337 4.81778 4.81814 1.83301 8.50004 1.83301C12.1819 1.83301 15.1667 4.81778 15.1667 8.49967Z" stroke="#F04438" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    <p>결제 금액이 담은 시점보다 1,000원 높아요</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sheet-body">
+                <div class="sheet-prow proposed-region" style="padding:10px;">
+                  <div class="citem-thumb">이미지</div>
+                  <div class="info">
+                    <p class="citem-name">실리콘 냄비집게 2P</p>
+                    <p class="citem-option">그레이 · <span class="qty-nowrap">2개</span></p>
+                  </div>
+                  <div class="price-change up">
+                    <div class="pc-line">
+                      <span class="pc-base">9,800원</span>
+                      <span class="pc-now">10,800원</span>
+                    </div>
+                    <span class="pc-delta">1,000원 인상</span>
+                  </div>
+                </div>
+                <!-- component: AmountSummaryBox(variant=accent) -->
+                <div class="amount-box accent red">
+                  <p style="color:var(--g900);">총 결제금액</p>
+                  <p style="color:var(--red500);">44,600원</p>
+                </div>
+              </div>
+
+              <!-- 7. 확인 모드 버튼 -->
+              <div class="num-region">
+                <span class="num-badge">7</span>
+                <!-- component: Button(size=xl, color=greyOutLine) -->
+                <!-- component: Button(size=xl, color=black) -->
+                <div class="sheet-buttons">
+                  <!-- component: Button(size=xl, color=greyOutLine) -->
+                  <button class="btn s-xl c-greyOutLine" type="button">장바구니로 돌아가기</button>
+                  <!-- component: Button(size=xl, color=black) -->
+                  <button class="btn s-xl c-black" type="button">주문 진행</button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+        <p class="frame-caption">2-B · 주문 진입 확인 모드 — “구매하기” 클릭 시(선택에 인상 상품 포함)</p>
+      </div>
+
+    </div>
+
+    <div class="screen-desc">
+      <h4>디스크립션 — cart-price-change-sheet (가격 변동 확인 바텀시트)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>시트 헤더</strong> — <code>Backdrop</code> + <code>InfoConfirmSheet(align=stretch)</code> 골격에 <code>SectionTitle</code> + 설명. 시트를 <code>align=stretch</code>로 두는 이유는 본문에 좌우로 꽉 차는 상품 행과 금액 박스가 들어가기 때문이다(<code>center</code>는 문구만 있는 안내용).<div class="tag-row"><span class="pair"><span class="tag">Backdrop</span> <code>atoms-backdrop--default</code></span><span class="pair"><span class="tag">InfoConfirmSheet(align=stretch)</span> <code>popups-infoconfirmsheet--with-sections</code></span><span class="pair"><span class="tag">SectionTitle</span> <code>atoms-sectiontitle--default</code></span></div></div></li>
+        <li><span class="num proposed">2</span><div><strong>변동 상품 행(읽기전용)</strong> — 변동이 있는 상품만 모아 담은가·현재가·증감액을 보여준다. 이 시트는 장바구니 페이지 안에서 열리므로 <strong>같은 페이지의 <code>CartItemBox</code>를 재사용</strong>하며(다른 페이지 전용 컴포넌트를 끌어오지 않으므로 “공용화 필요”가 아니다), 수량 스테퍼·체크박스·삭제 아이콘이 필요 없으니 <code>readOnly</code> 모드를 더한다. 가격 비교 표기는 화면 1의 5번과 동일한 <strong>신규 <code>PriceChangeAmount</code></strong>다 — 같은 컴포넌트가 두 곳에서 쓰이는 것이 공용 atom으로 신설하는 근거다.<div class="tag-row"><span class="pair"><span class="tag new">신규 필요 — PriceChangeAmount</span></span><span class="pair"><span class="tag local">참조 전용 — cart / CartItemBox</span> <code>cart-itembox--long-product-name</code></span></div></div></li>
+        <li><span class="num">3</span><div><strong>합계 변동</strong> — <code>AmountSummaryBox(variant=accent)</code>. <code>accent</code>는 좌측 3px 강조선 + 틴트 배경이고 색은 호출부가 토큰으로 주입하므로(<code>accentBg</code>/<code>accentBorder</code>), 합계가 내려가면 <code>blue_50</code>/<code>blue_500</code>, 올라가면 <code>red_50</code>/<code>red_500</code>으로 같은 컴포넌트를 쓴다. 두 색 조합 모두 전용 스토리가 있다.<div class="tag-row"><span class="pair"><span class="tag">AmountSummaryBox(variant=accent)</span> <code>atoms-amountsummarybox--accent-blue</code></span><span class="pair"><span class="tag">AmountSummaryBox(variant=accent)</span> <code>atoms-amountsummarybox--accent-red</code></span></div></div></li>
+        <li><span class="num">4</span><div><strong>안내 문구</strong> — <code>ListText</code>. 확인이 “기준가 갱신”이라는 부수효과를 갖는다는 사실을 미리 알린다(확인 후 같은 변동이 다시 뜨지 않는 이유).<div class="tag-row"><span class="pair"><span class="tag">ListText</span> <code>atoms-listtext--default</code></span></div></div></li>
+        <li><span class="num">5</span><div><strong>열람 모드 버튼</strong> — <code>Button(size=xl, color=whiteWithLine)</code> “인상 상품 빼기” + <code>Button(size=xl, color=black)</code> “확인”. 인상 상품이 없으면 왼쪽 버튼을 렌더하지 않고 “확인” 하나만 전폭으로 둔다.<div class="tag-row"><span class="pair"><span class="tag">Button(size=xl, color=whiteWithLine)</span> <code>atoms-button--all-colors</code></span><span class="pair"><span class="tag">Button(size=xl, color=black)</span> <code>atoms-button--all-sizes</code></span></div></div></li>
+        <li><span class="num proposed">6</span><div><strong>인상 경고(확인 모드)</strong> — 2-B에서만 노출. 현행은 이 시점의 정보가 없어 <code>/order</code> 진입 후 “실시간으로 재고가 소진되었거나 판매조건이 변경되어…” 단일 모달 + <code>router.back()</code>으로 끝난다(<code>orderClient.tsx:255-269</code>) — 그 실패를 <strong>사전 안내로 앞당기는 것</strong>이 이 영역의 목적이다. 화면 1의 2번과 같은 이유로 <code>NoticeBox</code>의 <em>variant 값 추가</em>(<code>CART_PRICE_INCREASED</code>)가 필요하다.<div class="tag-row"><span class="pair"><span class="tag new">variant 값 추가 필요 — NoticeBox(CART_PRICE_INCREASED)</span> <code>components-noticebox--unavailable-address</code></span><span class="pair"><span class="tag">RedLineInfoIconSVG</span> <code>icons-each--red-line-info-icon-svg</code></span></div></div></li>
+        <li><span class="num">7</span><div><strong>확인 모드 버튼</strong> — <code>Button(size=xl, color=greyOutLine)</code> “장바구니로 돌아가기” + <code>Button(size=xl, color=black)</code> “주문 진행”. 돌아가기는 선택 상태를 유지한 채 시트만 닫고, 주문 진행은 현재가 기준으로 <code>/order</code>로 이동한다. 이때 넘기는 payload는 현행과 동일하게 금액이 없는 <code>{productOrders:[{sellerProductId, channelProductId, optionId, quantity}]}</code>이며(<code>cartClient.tsx:333-340</code>) 금액은 서버가 재계산한다 — 즉 <strong>이 확인 단계는 서버 재계산을 대체하지 않고 사용자 인지만 앞당긴다</strong>.<div class="tag-row"><span class="pair"><span class="tag">Button(size=xl, color=greyOutLine)</span> <code>atoms-button--grey-outline</code></span><span class="pair"><span class="tag">Button(size=xl, color=black)</span> <code>atoms-button--all-sizes</code></span></div></div></li>
+      </ol>
+      <p class="new-component-note">
+        <strong>디자인 시스템 미보유:</strong>
+        <span class="proposed-name">PriceChangeAmount</span>(2번) · <span class="proposed-name">NoticeBox variant 값 <code>CART_PRICE_INCREASED</code></span>(6번) — 둘 다 화면 1과 동일 대상이며 이 화면에서 새로 생기는 신규 제작 항목은 없다.
+        시트 골격을 <code>InfoConfirmSheet</code>로 쓰는 이유: 확인 시트류의 다른 후보인 <code>ConfirmDialog</code>는 제목·설명·버튼만 있는 중앙 다이얼로그라 상품 행과 금액 박스를 담을 수 없고, <code>ListBottom</code>은 목록 선택 전용이며, <code>FullScreenPopup</code>은 이 정보량에 과하다.
+        <br />그 외 사용 컴포넌트: <code>Backdrop</code>, <code>InfoConfirmSheet(align=stretch)</code>, <code>SectionTitle</code>, <code>AmountSummaryBox(variant=accent)</code>, <code>ListText</code>, <code>Button(size=xl, color=black/whiteWithLine/greyOutLine)</code>, <code>NoticeBox</code>, 아이콘 <code>RedLineInfoIconSVG</code>.
+        <br /><strong>이 화면의 수정 대상(페이지 전용, 태깅 아님):</strong> <code>CartItemBox</code>(<code>readOnly</code> 모드 추가) · <code>cartClient</code>(시트 상태·진입 경로 2종 분기).
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       화면 3 : cart-price-alert-receive
+       ================================================================ -->
+  <section class="screen-block" id="screen-push">
+    <div class="screen-title">
+      <span class="screen-num">화면 3</span>
+      <h3>cart-price-alert-receive <span class="kr">(가격 변동 알림 수신 — 앱 푸시 / 웹 fallback)</span></h3>
+      <span class="badge-doc">story-cart-price-alert-receive</span>
+    </div>
+
+    <div class="screen-mock two-up">
+
+      <!-- 3-A : 앱 푸시 -->
+      <div>
+        <div class="phone">
+          <div class="phone-screen">
+            <div class="dim-back" style="height:120px;">앱 실행 중 / 홈 (뒤 화면)</div>
+
+            <!-- 1. 앱 푸시 카드 -->
+            <div class="app-toast push top show" id="p-push" style="top:20px;">
+              <span class="num-badge">1</span>
+              <!-- component: Toast -->
+              <!-- component: BellIconSVG -->
+              <div class="msg" id="p-pushMsg">
+                <!-- component: BellIconSVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18" fill="none" style="flex-shrink:0; margin-top:2px;"><path d="M13.5194 6.22227C13.5194 5.00539 13.0432 3.83836 12.1957 2.9779C11.3481 2.11744 10.1986 1.63403 9 1.63403C7.80139 1.63403 6.65187 2.11744 5.80433 2.9779C4.95679 3.83836 4.48064 5.00539 4.48064 6.22227C4.48064 8.23562 4.05441 9.70808 3.52258 10.7617C2.91644 11.9625 2.61337 12.5629 2.62534 12.7064C2.63903 12.8705 2.66425 12.9222 2.77785 13.0196C2.87715 13.1046 3.37604 13.1046 4.37382 13.1046H13.6262C14.624 13.1046 15.1229 13.1046 15.2221 13.0196C15.3358 12.9222 15.361 12.8705 15.3747 12.7064C15.3866 12.5629 15.0836 11.9625 14.4774 10.7617C13.9456 9.70808 13.5194 8.23562 13.5194 6.22227Z" stroke="#FEC84B" stroke-width="1.66667" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.5194 6.22227C13.5194 5.00539 13.0432 3.83836 12.1957 2.9779C11.3481 2.11744 10.1986 1.63403 9 1.63403C7.80139 1.63403 6.65187 2.11744 5.80433 2.9779C4.95679 3.83836 4.48064 5.00539 4.48064 6.22227C4.48064 8.23562 4.05441 9.70808 3.52258 10.7617C2.91644 11.9625 2.61337 12.5629 2.62534 12.7064C2.63903 12.8705 2.66425 12.9222 2.77785 13.0196C2.87715 13.1046 3.37604 13.1046 4.37382 13.1046H13.6262C14.624 13.1046 15.1229 13.1046 15.2221 13.0196C15.3358 12.9222 15.361 12.8705 15.3747 12.7064C15.3866 12.5629 15.0836 11.9625 14.4774 10.7617C13.9456 9.70808 13.5194 8.23562 13.5194 6.22227Z" fill="#FEC84B"></path><rect x="6.26807" y="14.8694" width="5.46429" height="1.76471" rx="0.882353" fill="#FEC84B"></rect></svg>
+                <div>
+                  <p class="p-title">장바구니 상품 가격이 내려갔어요</p>
+                  <p class="p-desc">데일리 스텐 텀블러 500ml · 12,900원 → 10,900원</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 푸시 카드(absolute, top 20 + 높이 약 90)가 놓일 자리 -->
+            <div style="height:40px;"></div>
+
+            <!-- 2. 딥링크 진입 결과 -->
+            <div class="num-region">
+              <span class="num-badge proposed">2</span>
+              <!-- component: Header -->
+              <!-- component: NoticeBox(variant=GROUP_DELIVERY) -->
+              <!-- variant 값 추가 필요: CART_PRICE_CHANGED — 인하 단독이므로 파랑 계열이고,
+                   그 스타일은 GROUP_DELIVERY(blue_50/blue_500)와 동일하다. 값 이름만 신설한다. -->
+              <!-- 신규 필요: PriceChangeAmount -->
+              <div style="background:var(--g100); border-radius:0 0 19px 19px; padding-bottom:16px;">
+                <div class="app-header" style="border-radius:0;">
+                  <div class="h-left">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" cursor="pointer"><path d="M15 18L9 12L15 6" stroke="#111927" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </div>
+                  <span class="h-title">장바구니</span>
+                </div>
+                <div style="padding:12px 20px 16px; background:#fff;">
+                  <div class="notice-pill blue proposed-region">
+                    <!-- component: BlueLineInfoIconSVG -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="17" viewBox="0 0 16 17" fill="none"><path d="M7.99998 5.83325V8.49992M7.99998 11.1666H8.00665M14.6666 8.49992C14.6666 12.1818 11.6819 15.1666 7.99998 15.1666C4.31808 15.1666 1.33331 12.1818 1.33331 8.49992C1.33331 4.81802 4.31808 1.83325 7.99998 1.83325C11.6819 1.83325 14.6666 4.81802 14.6666 8.49992Z" stroke="#2E90FA" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    <p>가격이 내려간 상품 1개가 있어요</p>
+                  </div>
+                </div>
+                <div style="padding:0 20px;">
+                  <div class="cart-card">
+                    <div class="sheet-prow">
+                      <div class="citem-thumb">이미지</div>
+                      <div class="info">
+                        <p class="citem-name">데일리 스텐 텀블러 500ml (2color)</p>
+                        <p class="citem-option">아이보리 / 500ml</p>
+                      </div>
+                      <div class="price-change down">
+                        <div class="pc-line">
+                          <span class="pc-base">12,900원</span>
+                          <span class="pc-now">10,900원</span>
+                        </div>
+                        <span class="pc-delta">2,000원 인하</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+        <p class="frame-caption">3-A · 앱 푸시 수신 → 딥링크로 장바구니 진입 · <a href="#" id="p-replay">푸시 다시 보기</a></p>
+      </div>
+
+      <!-- 3-B : 웹 fallback -->
+      <div>
+        <div class="phone">
+          <div class="phone-screen">
+            <div class="app-header" style="border-radius:19px 19px 0 0;">
+              <div class="h-left">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" cursor="pointer"><path d="M15 18L9 12L15 6" stroke="#111927" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <span class="h-title">장바구니</span>
+            </div>
+
+            <!-- 3. 웹 fallback 인앱 안내 -->
+            <div class="num-region">
+              <span class="num-badge">3</span>
+              <!-- component: NoticeBox(variant=CTA) -->
+              <!-- component: DropdownArrowSVG -->
+              <div class="noticebox-cta">
+                <div>
+                  <p class="nb-title" style="margin:0;">담아둔 상품 가격이 바뀌었어요</p>
+                  <p class="nb-desc" style="margin:6px 0 0;">앱에서는 가격이 바뀌는 순간 알림으로 알려드려요.</p>
+                </div>
+                <button class="nb-btn" id="w-checkBtn" type="button">
+                  변동 내역 확인
+                  <!-- component: DropdownArrowSVG (270deg 회전 — settingsClient.tsx:43과 동일 사용법) -->
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 22 22" fill="none" style="transform:rotate(270deg);"><path d="M5.5 8.25L11 13.75L16.5 8.25" stroke="#FDB022" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <div style="background:var(--g100); padding:16px 20px 96px; border-radius:0 0 19px 19px;">
+              <div class="cart-card">
+                <div class="sheet-prow">
+                  <div class="citem-thumb">이미지</div>
+                  <div class="info">
+                    <p class="citem-name">데일리 스텐 텀블러 500ml (2color)</p>
+                    <p class="citem-option">아이보리 / 500ml</p>
+                  </div>
+                  <div class="price-change down">
+                    <div class="pc-line">
+                      <span class="pc-base">12,900원</span>
+                      <span class="pc-now">10,900원</span>
+                    </div>
+                    <span class="pc-delta">2,000원 인하</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- component: Toast -->
+            <div class="app-toast bottom" id="w-toast" style="bottom:20px;"><span class="num-badge">4</span><!-- component: Toast --><div class="msg" id="w-toastMsg">변동 내역을 확인했어요</div></div>
+
+          </div>
+        </div>
+        <p class="frame-caption">3-B · 모바일웹(푸시 미도달) — 재진입 시 인앱 안내로 대체 · 버튼을 눌러 보세요</p>
+      </div>
+
+    </div>
+
+    <div class="screen-desc">
+      <h4>디스크립션 — cart-price-alert-receive (가격 변동 알림 수신)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>앱 푸시 수신</strong> — <code>Toast</code>의 push 타입(흰 배경 <code>#fff</code> / <code>border-radius 8px</code> / <code>box-shadow 0 4px 8px 3px rgba(0,0,0,.15)</code> / 제목 <code>label1.medium</code> + 설명 <code>label2.regular</code>)과 <code>BellIconSVG</code>로 <strong>수신 시 문안 구성</strong>을 보여주는 목업이다. 실제 발송·표시는 Flutter WebView 브릿지가 담당하며 웹에는 발송 수단이 없다(웹푸시·FCM·service worker 전무). 푸시 문안에 담은가·현재가를 함께 넣어 화면과 값이 어긋나지 않게 한다. 단 <strong>가격 비노출 등급(<code>priceVisible=false</code>) 대상에게는 금액을 넣은 알림을 보내지 않는다</strong> — 앱에서 볼 수 없는 금액을 알림으로 노출하는 것이 되기 때문이다.<div class="tag-row"><span class="pair"><span class="tag">Toast</span> <code>components-toast--default</code></span><span class="pair"><span class="tag">BellIconSVG</span> <code>icons-each--bell-icon-svg</code></span></div></div></li>
+        <li><span class="num proposed">2</span><div><strong>딥링크 진입 결과</strong> — 푸시를 누르면 기존 <code>DeepLink</code> 수신 경로(<code>Layout.tsx:123-129</code>의 <code>router.push(message.value)</code>)를 그대로 타고 <code>/cart</code>로 진입한다. 이때 <strong>장바구니를 강제로 다시 조회</strong>해야 한다 — <code>useGetCartList</code>가 전역 <code>staleTime: 5분</code> · <code>refetchOnWindowFocus: false</code>를 쓰므로(<code>queries.ts:5-12</code>, <code>queryProvider.tsx:14-17</code>) 그냥 두면 푸시를 눌러 들어와도 캐시된 옛 가격이 보인다. 인하만 있는 경우이므로 요약 안내는 파랑 계열이며, 값 이름은 화면 1의 2번과 같은 <em>variant 값 추가</em>가 필요하다.<div class="tag-row"><span class="pair"><span class="tag new">variant 값 추가 필요 — NoticeBox(CART_PRICE_CHANGED)</span> <code>components-noticebox--group-delivery</code></span><span class="pair"><span class="tag">Header</span> <code>components-header--back-and-title</code></span><span class="pair"><span class="tag new">신규 필요 — PriceChangeAmount</span></span></div></div></li>
+        <li><span class="num">3</span><div><strong>웹 fallback 인앱 안내</strong> — 모바일웹 사용자는 푸시 도달 대상이 아니고 인앱 알림함도 없어, 놓친 변동을 되짚을 창구가 없다. 그래서 재진입 시 <code>NoticeBox(variant=CTA)</code>(<code>orange_50</code> 배경 / <code>orange_200</code> 하단선 / 둥근 버튼)로 그동안의 변동을 알리고 확인 시트로 유도한다. <strong>이 variant는 이미 있으므로 그대로 쓴다</strong>(2번의 pill과 달리 값 추가가 필요 없다) — 제목·설명·버튼 3요소 구성이 정확히 일치하기 때문이다. 버튼 화살표는 설정 화면이 이미 쓰는 <code>DropdownArrowSVG</code> 270° 회전 방식(<code>settingsClient.tsx:43</code>)을 따른다.<div class="tag-row"><span class="pair"><span class="tag">NoticeBox(variant=CTA)</span> <code>components-noticebox--cta</code></span><span class="pair"><span class="tag">DropdownArrowSVG</span> <code>icons-each--dropdown-arrow-svg</code></span></div></div></li>
+        <li><span class="num">4</span><div><strong>결과 안내</strong> — <code>Toast</code>. 확인 처리 결과를 알린다. 푸시 동의 상태 변경 시의 토스트는 이미 전용 스토리가 있다(<code>components-toast--push-agreed</code>/<code>--push-revoked</code>) — 설정 화면(화면 4)에서 같은 경로를 쓴다.<div class="tag-row"><span class="pair"><span class="tag">Toast</span> <code>components-toast--default</code></span><span class="pair"><span class="tag">Toast</span> <code>components-toast--push-agreed</code></span></div></div></li>
+      </ol>
+      <p class="new-component-note">
+        <strong>디자인 시스템 미보유:</strong> 없음 — 이 화면의 모든 요소가 기존 컴포넌트로 덮인다.
+        2번의 <span class="proposed-name">NoticeBox variant 값</span>과 <span class="proposed-name">PriceChangeAmount</span>는 화면 1·2와 동일 대상이다.
+        인앱 알림함·알림 리스트는 공용·페이지 전용 어디에도 없지만 <strong>이 에픽의 제외 범위</strong>이므로 제안하지 않는다(푸시 + 장바구니 인앱 안내로 갈음).
+        <br />그 외 사용 컴포넌트: <code>Toast</code>, <code>Header</code>, <code>NoticeBox(variant=CTA)</code>, 아이콘 <code>BellIconSVG</code>·<code>BackSVG</code>·<code>BlueLineInfoIconSVG</code>·<code>DropdownArrowSVG</code>.
+        <br /><strong>이 화면의 수정 대상(페이지 전용, 태깅 아님):</strong> <code>cartClient</code>(진입 시 강제 재조회 · 웹 fallback 안내 조건부 렌더). 앱 측 푸시 발송·표시는 Flutter 작업이므로 이 캔버스 범위 밖이다.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       화면 4 : my-page-settings-cart-price-alert
+       ================================================================ -->
+  <section class="screen-block" id="screen-setting">
+    <div class="screen-title">
+      <span class="screen-num">화면 4</span>
+      <h3>my-page-settings-cart-price-alert <span class="kr">(설정 — 장바구니 가격 변동 알림 수신)</span></h3>
+      <span class="badge-doc">story-cart-price-alert-setting</span>
+    </div>
+
+    <div class="screen-mock">
+      <div class="phone">
+        <div class="phone-screen">
+
+          <!-- 1. Header -->
+          <div class="num-region">
+            <span class="num-badge">1</span>
+            <!-- component: Header -->
+            <!-- component: BackSVG -->
+            <div class="app-header">
+              <div class="h-left">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" cursor="pointer"><path d="M15 18L9 12L15 6" stroke="#111927" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <span class="h-title">설정</span>
+            </div>
+          </div>
+
+          <!-- 2. OS 알림 꺼짐 안내(조건부) -->
+          <div class="num-region" id="s-permBlock">
+            <span class="num-badge">2</span>
+            <!-- 참조 전용(page-local): settingsClient 인라인 안내 — 태깅 대상 아님, 그대로 재사용 -->
+            <!-- component: BlueLineInfoIconSVG -->
+            <!-- component: DropdownArrowSVG -->
+            <!-- 참조 전용(page-local): my-page / settingsClient(AlarmOffNotice) -->
+            <div style="padding:24px 16px 0;">
+              <div class="alarm-off">
+                <!-- component: BlueLineInfoIconSVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="17" viewBox="0 0 16 17" fill="none" style="flex-shrink:0; margin-top:2px;"><path d="M7.99998 5.83325V8.49992M7.99998 11.1666H8.00665M14.6666 8.49992C14.6666 12.1818 11.6819 15.1666 7.99998 15.1666C4.31808 15.1666 1.33331 12.1818 1.33331 8.49992C1.33331 4.81802 4.31808 1.83325 7.99998 1.83325C11.6819 1.83325 14.6666 4.81802 14.6666 8.49992Z" stroke="#2E90FA" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div>
+                  <!-- 현행 문구 그대로: settingPage.alarm.title / .description / .button -->
+                  <p class="n-title">기기 알림이 꺼져있어요!</p>
+                  <p class="n-desc">중요한 알림을 놓치지 않도록 알림을 켜주세요.</p>
+                  <span class="n-btn" id="s-permBtn">
+                    알림 켜기
+                    <!-- component: DropdownArrowSVG (270deg 회전) -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 22 22" fill="none" style="transform:rotate(270deg);"><path d="M5.5 8.25L11 13.75L16.5 8.25" stroke="#1570EF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. 설정 타이틀 -->
+          <div class="num-region">
+            <span class="num-badge">3</span>
+            <!-- 참조 전용(page-local): my-page / settingsClient(Title·Description) -->
+            <!-- 현행 값은 settingPage.header.title = "마케팅 수신 동의" /
+                 .description = "다양한 이벤트와 혜택 정보를 알려드립니다." 다.
+                 즉 이 페이지는 지금 "마케팅 동의 전용" 화면으로 프레이밍돼 있어, 거래성 알림 항목을
+                 그 아래 넣으면 제목과 내용이 어긋난다 → 문구 변경이 이 기획의 선행 작업이다. -->
+            <div style="padding:24px 16px 14px;">
+              <p class="set-title">알림 설정</p>
+              <p class="set-desc">받고 싶은 알림만 골라서 받을 수 있어요.</p>
+            </div>
+          </div>
+
+          <div style="padding:0 16px;">
+
+            <!-- 4. 마케팅 정보 수신 동의(기존) -->
+            <div class="num-region">
+              <span class="num-badge shared-needed inset">4</span>
+              <!-- 공용화 필요 — my-page / AgreementToggle (app/my-page/_shared/components/agreementToggle/agreementToggle.tsx) — 태깅 대상 아님 -->
+              <!-- 공용화 필요 — my-page / AgreementToggle -->
+              <!-- component: Switch -->
+              <!-- component: ThinDivider -->
+              <div class="shared-needed-region">
+                <div class="agree-row">
+                  <!-- 현행 문구 그대로: settingPage.toggle.title -->
+                  <p class="a-title">마케팅 목적의 개인정보 수집 및 이용동의</p>
+                  <!-- component: Switch -->
+                  <button class="switch on" data-switch="marketing" type="button" aria-label="마케팅 목적의 개인정보 수집 및 이용동의"><span class="knob"></span></button>
+                </div>
+                <hr class="thin-divider" />
+                <!-- 현행 문구 그대로: settingPage.toggle.description -->
+                <p class="agree-desc">서비스 알림은 수신설정에 상관없이 전송됩니다.</p>
+              </div>
+            </div>
+
+            <!-- 5. 장바구니 가격 변동 알림(추가 항목) -->
+            <div class="num-region">
+              <span class="num-badge proposed inset">5</span>
+              <!-- 공용화 필요 — my-page / AgreementToggle 승격 후 항목 추가 — 신규 제작 아님 -->
+              <!-- 공용화 필요 — my-page / AgreementToggle -->
+              <!-- component: Switch -->
+              <!-- component: ThinDivider -->
+              <div class="proposed-region">
+                <div class="agree-row">
+                  <p class="a-title">장바구니 가격 인하 알림</p>
+                  <!-- component: Switch -->
+                  <button class="switch on" data-switch="down" type="button" aria-label="장바구니 가격 인하 알림"><span class="knob"></span></button>
+                </div>
+                <hr class="thin-divider" />
+                <p class="agree-desc">담아둔 상품이 싸지면 알림으로 알려드려요.</p>
+                <div class="agree-row" style="padding-top:6px;">
+                  <p class="a-title">장바구니 가격 인상 알림</p>
+                  <!-- component: Switch -->
+                  <button class="switch on" data-switch="up" type="button" aria-label="장바구니 가격 인상 알림"><span class="knob"></span></button>
+                </div>
+                <hr class="thin-divider" />
+                <p class="agree-desc">담아둔 상품 가격이 오르면 결제 전에 알려드려요.</p>
+                <p class="agree-warn hidden" id="s-warn">알림을 끄면 담아둔 상품 가격이 바뀌어도 알림을 받을 수 없어요. 장바구니 안의 변동 표기는 그대로 유지돼요.</p>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 토스트가 5번 경고 문구를 가리지 않도록 프레임 하단 여백을 둔다(실앱은 스크롤로 확보되는 공간) -->
+          <div style="height:96px;"></div>
+
+          <!-- component: Toast -->
+          <div class="app-toast bottom" id="s-toast" style="bottom:20px;"><span class="num-badge">6</span><!-- component: Toast --><div class="msg" id="s-toastMsg">장바구니 가격 인하 알림이 설정되었어요</div></div>
+
+        </div>
+      </div>
+      <p class="frame-caption">토글을 눌러 보세요 — 가격 변동 알림을 모두 끄면 경고 문구가 나타납니다 · <a href="#" id="s-togglePerm">OS 푸시 권한 허용 상태로 보기</a></p>
+    </div>
+
+    <div class="screen-desc">
+      <h4>디스크립션 — my-page-settings-cart-price-alert (설정 — 장바구니 가격 변동 알림 수신)</h4>
+      <ol class="desc-legend">
+        <li><span class="num">1</span><div><strong>헤더</strong> — 공용 <code>Header</code>. 기존 <code>/my-page/settings</code> 화면을 그대로 쓰며 새 페이지를 만들지 않는다. <code>my-page/layout.tsx</code>가 <code>isNavMenu={pathname === '/my-page'}</code>이므로 <strong>설정 화면에는 하단 탭(<code>BottomMenu</code>)이 없다</strong> — 목업도 같게 두었다.<div class="tag-row"><span class="pair"><span class="tag">Header</span> <code>components-header--back-and-title</code></span><span class="pair"><span class="tag">BackSVG</span> <code>icons-each--back-svg</code></span></div></div></li>
+        <li><span class="num">2</span><div><strong>OS 알림 꺼짐 안내(조건부)</strong> — <code>!permissionState &amp;&amp; isApp</code>일 때만 노출되며 <strong>이 안내는 이미 이 화면에 있다</strong>(<code>settingsClient.tsx:34-48</code>, 문구 키 <code>settingPage.alarm.title/description/button</code>). 다만 공용 <code>NoticeBox</code>가 아니라 <code>settingsClientStyle.ts:28-51</code>의 인라인 styled(<code>blue_50</code> 배경 / <code>radius 10px</code> / <code>BlueLineInfoIconSVG</code> + <code>DropdownArrowSVG</code> 270°)다 — 그러므로 <code>NoticeBox(variant=CTA)</code>로 태깅하면 틀린 지시가 된다. 버튼은 <code>permissionState === null</code>이면 <code>Permission:'Push'</code> 재요청, 아니면 <code>RequestMoveToAppSetting</code>을 브릿지로 보낸다. <strong>재사용만 하고 변경하지 않는다.</strong><div class="tag-row"><span class="pair"><span class="tag local">참조 전용 — my-page / settingsClient(AlarmOffNotice)</span> <code>my-page-agreementtoggle--alarm-off-notice-in-app</code></span><span class="pair"><span class="tag">BlueLineInfoIconSVG</span> <code>icons-each--blue-line-info-icon-svg</code></span><span class="pair"><span class="tag">DropdownArrowSVG</span> <code>icons-each--dropdown-arrow-svg</code></span></div></div></li>
+        <li><span class="num">3</span><div><strong>설정 헤더 텍스트 — 문구 변경이 선행돼야 한다</strong> — <code>settingPage.header.title</code>(<code>headline1.bold</code> / <code>gray_neutral_950</code>) + <code>.description</code>(<code>body1.regular</code> / <code>line-height 150%</code> / <code>gray_neutral_500</code>). <strong>현행 값은 “마케팅 수신 동의” / “다양한 이벤트와 혜택 정보를 알려드립니다.”</strong>다 — 즉 이 페이지는 지금 마케팅 동의 전용 화면으로 프레이밍돼 있고, 그 아래에 거래성 알림 항목을 넣으면 제목과 내용이 어긋난다. 따라서 이 화면의 문구를 알림 설정 전반으로 넓히는 것이 <strong>5번 항목 추가의 선행 조건</strong>이다(번역 3개국어 <code>locales.json</code> 수정 + <code>settingPage</code> chunk 확인 필요).<div class="tag-row"><span class="pair"><span class="tag local">참조 전용 — my-page / settingsClient(Title·Description)</span></span></div></div></li>
+        <li><span class="num shared-needed">4</span><div><strong>마케팅 수신 동의(기존, 문구는 현행 그대로)</strong> — 제목 “마케팅 목적의 개인정보 수집 및 이용동의”(<code>body1.bold</code>) + <code>Switch</code> + <code>ThinDivider</code> + 설명(<code>label1.regular</code> / <code>gray_neutral_400</code>) + 경고 문구(<code>label2.medium</code> / <code>red_500</code>) 조합의 동의 행. 이 행은 <code>my-page</code> 페이지 전용 <code>AgreementToggle</code>이 담당하므로 태깅 대상이 아니고, 게다가 <strong>제목·설명 i18n 키와 마케팅 동의 mutation이 컴포넌트 안에 하드코딩돼 있다</strong>(<code>agreementToggle.tsx:27,37,48</code>) → 항목을 하나 더 추가하려면 <em>공용화(제목·설명·값·onChange를 props로 일반화) 후 승격</em>이 선행돼야 한다. <code>Switch</code>·<code>ThinDivider</code> 자체는 공용이므로 그대로 태깅한다.<div class="tag-row"><span class="pair"><span class="tag shared">공용화 필요 — my-page / AgreementToggle</span> <code>app/my-page/_shared/components/agreementToggle/agreementToggle.tsx</code></span><span class="pair"><span class="tag">Switch</span> <code>atoms-switch--on</code></span><span class="pair"><span class="tag">ThinDivider</span> <code>atoms-dividers--thin</code></span></div></div></li>
+        <li><span class="num proposed">5</span><div><strong>장바구니 가격 변동 알림(추가 항목)</strong> — 4번과 같은 동의 행 형태로 <strong>인하·인상 두 항목</strong>을 추가한다. 방향을 나누는 이유는 성격이 다르기 때문이다 — 인하는 마케팅성 유도, 인상은 결제 전 고지에 가깝다. 둘 다 끄면 붉은 경고 문구로 “장바구니 안 표기는 유지된다”는 사실을 함께 알린다(알림과 화면 표기가 별개임을 오해하지 않도록). 이 영역을 주황으로 표시한 이유는 <em>공용화 전에는 재사용할 구현 자산이 없다</em>는 뜻이고 새 컴포넌트를 만들라는 뜻이 아니다 — 승격되면 항목 추가만으로 끝난다. 수신 여부를 마케팅 동의에 묶지 않고 별도 축으로 두는 것은 정책 결정 사항이며, 이 기획은 <strong>거래성 알림으로 분리</strong>하는 안을 택했다. 근거는 화면 자신에 적혀 있다 — 4번 항목의 설명 문구가 이미 “<strong>서비스 알림은 수신설정에 상관없이 전송됩니다</strong>”(<code>settingPage.toggle.description</code>)라고 선언하므로, 결제 전 고지 성격인 <em>인상</em> 알림을 마케팅 동의에 묶으면 이 문장과 모순된다. 다만 <em>인하</em>는 구매 유도 성격이 강해 사용자가 끌 수 있어야 하므로 두 방향을 각각의 토글로 둔다. 저장 축은 현행에 <code>PUT /member/me/marketing-agree</code> 하나뿐이라 <strong>새 설정 저장 API가 필요하다</strong>(서버 선행 요건 2건 중 하나 — 다른 하나는 담은 시점 기준가).<div class="tag-row"><span class="pair"><span class="tag shared">공용화 필요 — my-page / AgreementToggle</span> <code>app/my-page/_shared/components/agreementToggle/agreementToggle.tsx</code></span><span class="pair"><span class="tag">Switch</span> <code>atoms-switch--off</code></span><span class="pair"><span class="tag">ThinDivider</span> <code>atoms-dividers--thin</code></span></div></div></li>
+        <li><span class="num">6</span><div><strong>설정 변경 안내</strong> — <code>Toast</code>. 마케팅 동의 토글이 현재 쓰는 방식(<code>toast.push({agreement})</code>, <code>agreementToggle.tsx:38</code>)과 동일하게 결과를 하단 토스트로 알린다. 실패 시에는 서버 메시지를 그대로 노출하는 현행 처리를 유지한다(<code>:39-42</code>).<div class="tag-row"><span class="pair"><span class="tag">Toast</span> <code>components-toast--push-agreed</code></span><span class="pair"><span class="tag">Toast</span> <code>components-toast--push-revoked</code></span></div></div></li>
+      </ol>
+      <p class="new-component-note">
+        <strong>디자인 시스템 미보유:</strong> 없음 — 이 화면의 모든 요소가 기존 컴포넌트로 덮인다.
+        <span class="shared-name">공용화 필요 — my-page / AgreementToggle</span> (<code>app/my-page/_shared/components/agreementToggle/agreementToggle.tsx</code>) — 4·5번의 “제목 + Switch + 구분선 + 설명 + 경고문구” 동의 행이 <code>my-page</code> 페이지 전용으로 묶여 있고 제목 i18n 키와 마케팅 동의 mutation까지 내부에 고정돼 있다. 가격 변동 알림 항목이 같은 UI를 쓰려면 공용 승격 + props 일반화가 선행돼야 한다.
+        대체 후보를 검토했으나 성립하지 않는다 — <code>my-link-shop</code>의 <code>LinkSearchableSetting</code>·<code>SwitchComponent</code>는 링크샵 전용이고(<code>viewType</code> 등 도메인 prop 전제), 공용 <code>InfoRow</code>는 라벨+값 한 줄일 뿐 설명·경고문구·구분선 조합이 없다.
+        <br />그 외 사용 컴포넌트: <code>Header</code>, <code>Switch</code>, <code>ThinDivider</code>, <code>Toast</code>, 아이콘 <code>BackSVG</code>·<code>BlueLineInfoIconSVG</code>·<code>DropdownArrowSVG</code>.
+        <br /><strong>이 화면의 수정 대상(페이지 전용, 태깅 아님):</strong> <code>settingsClient</code>(항목 추가·설명 문구 조정). <code>AlarmOffNotice</code> 블록은 그대로 재사용한다.
+      </p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* =========================================================================
+   화면 1 — 장바구니: 선택/수량/삭제에 따른 금액 재계산, 변동 확인 시트, CTA 분기
+   ========================================================================= */
+(function () {
+  var UNIT = '원';
+  function won(n) { return n.toLocaleString() + UNIT; }
+
+  // 담은 시점 단가(base)와 현재 단가(now)를 분리해 보관한다.
+  // 실제 API에는 base가 없다(ICartProduct에 담은 시점 가격 필드 없음) — 서버 선행 요건.
+  var SEED = {
+    A: {
+      name: '오늘의부엌', shippingFee: 3000, groupType: 'BRAND_DELIVERY',
+      items: [
+        { id: 1, name: '데일리 스텐 텀블러 500ml (2color)', option: '아이보리 / 500ml', qty: 1, base: 12900, now: 10900, selected: true },
+        { id: 2, name: '실리콘 냄비집게 2P', option: '그레이', qty: 2, base: 4900, now: 5400, selected: true }
+      ]
+    },
+    B: {
+      name: '쿨브리즈', shippingFee: 0, groupType: 'NONE',
+      items: [
+        { id: 3, name: '무선 핸디 선풍기 3세대', option: '화이트 / 기본형', qty: 1, base: 19900, now: 19900, selected: true }
+      ]
+    }
+  };
+  var groups = JSON.parse(JSON.stringify(SEED));
+
+  var rowsA = document.getElementById('c-rows');
+  var rowsB = document.getElementById('c-rowsB');
+  var summaryRegion = document.getElementById('c-summaryRegion');
+  var summaryText = document.getElementById('c-summaryText');
+  var summaryPill = document.getElementById('c-summary');
+  var backdrop = document.getElementById('c-backdrop');
+  var sheet = document.getElementById('c-sheet');
+  var sheetRows = document.getElementById('c-sheetRows');
+  var sheetTitle = document.getElementById('c-sheetTitle');
+  var sheetDesc = document.getElementById('c-sheetDesc');
+  var sheetSum = document.getElementById('c-sheetSum');
+  var sheetSumValue = document.getElementById('c-sheetSumValue');
+  var sheetPrimary = document.getElementById('c-sheetPrimary');
+  var sheetSecondary = document.getElementById('c-sheetSecondary');
+  var cta = document.getElementById('c-cta');
+  var toast = document.getElementById('c-toast');
+  var toastMsg = document.getElementById('c-toastMsg');
+  var sheetMode = 'REVIEW'; // REVIEW(안내 클릭) | ORDER(구매하기 클릭)
+
+  function showToast(msg) {
+    toastMsg.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { toast.classList.remove('show'); }, 2200);
+  }
+
+  function allItems() {
+    return groups.A.items.concat(groups.B.items);
+  }
+  function changedItems() {
+    return allItems().filter(function (i) { return i.base !== i.now; });
+  }
+
+  // 신규 필요 PriceChangeAmount 의 렌더 결과(담은가 취소선 → 현재가 + 증감액)
+  function priceChangeHtml(item) {
+    var baseSub = item.base * item.qty;
+    var nowSub = item.now * item.qty;
+    if (baseSub === nowSub) {
+      return '<p class="amount">' + won(nowSub) + '</p>';
+    }
+    var down = nowSub < baseSub;
+    var diff = Math.abs(nowSub - baseSub);
+    return '' +
+      '<div class="price-change ' + (down ? 'down' : 'up') + '">' +
+        '<div class="pc-line">' +
+          '<span class="pc-base">' + won(baseSub) + '</span>' +
+          '<span class="pc-now">' + won(nowSub) + '</span>' +
+        '</div>' +
+        '<span class="pc-delta">' + diff.toLocaleString() + '원 ' + (down ? '인하' : '인상') + '</span>' +
+      '</div>';
+  }
+
+  function rowHtml(item, groupKey) {
+    var checked = item.selected ? ' on' : '';
+    var changed = item.base !== item.now;
+    return '' +
+      '<div class="citem-row' + (changed ? ' proposed-region' : '') + '" data-row="' + item.id + '" style="' + (changed ? 'padding:8px;' : '') + '">' +
+        '<div class="citem-head">' +
+          '<span class="ds-checkbox' + checked + '" data-toggle="' + item.id + '">' +
+            '<span class="box"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15" fill="none"><path d="M11.6668 4L5.25016 10.4167L2.3335 7.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>' +
+          '</span>' +
+          '<button class="x" type="button" data-del="' + item.id + '" aria-label="삭제">' +
+            '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" cursor="pointer"><path d="M15 5L5 15M5 5L15 15" stroke="#D1D1D6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>' +
+          '</button>' +
+        '</div>' +
+        '<div class="citem-info">' +
+          '<div class="citem-thumb">이미지</div>' +
+          '<div>' +
+            '<p class="citem-name">' + item.name + '</p>' +
+            '<p class="citem-option">' + item.option + '</p>' +
+          '</div>' +
+        '</div>' +
+        '<div class="citem-count">' +
+          '<div class="stepper">' +
+            '<button class="step" type="button" data-step="DECREASE" data-id="' + item.id + '">' +
+              '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" cursor="pointer"><path d="M4.1665 10H15.8332" stroke="#4D5761" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>' +
+            '</button>' +
+            '<p class="val">' + item.qty + '</p>' +
+            '<button class="step" type="button" data-step="INCREASE" data-id="' + item.id + '">' +
+              '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" cursor="pointer"><path d="M9.99984 4.16699V15.8337M4.1665 10.0003H15.8332" stroke="#4D5761" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>' +
+            '</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="citem-price">' +
+          // 행의 배송비는 그룹 부과액이 아니라 item.originalShippingFee 를 그대로 찍는 현행 동작
+          // (itemBox.tsx:74-78, `cartPage.shippingFee` = "배송비 {{amount}}원" — 0이면 "배송비 0원")
+          '<p class="ship">배송비 ' + won(groups[groupKey].shippingFee) + '</p>' +
+          priceChangeHtml(item) +
+        '</div>' +
+        '<hr class="thin-divider" style="margin-top:12px;" />' +
+      '</div>';
+  }
+
+  function sheetRowHtml(item) {
+    var baseSub = item.base * item.qty;
+    var nowSub = item.now * item.qty;
+    var down = nowSub < baseSub;
+    var diff = Math.abs(nowSub - baseSub);
+    return '' +
+      '<div class="sheet-prow proposed-region" style="padding:10px;">' +
+        '<div class="citem-thumb">이미지</div>' +
+        '<div class="info">' +
+          '<p class="citem-name">' + item.name + '</p>' +
+          '<p class="citem-option">' + item.option + ' · <span class="qty-nowrap">' + item.qty + '개</span></p>' +
+        '</div>' +
+        '<div class="price-change ' + (down ? 'down' : 'up') + '">' +
+          '<div class="pc-line">' +
+            '<span class="pc-base">' + won(baseSub) + '</span>' +
+            '<span class="pc-now">' + won(nowSub) + '</span>' +
+          '</div>' +
+          '<span class="pc-delta">' + diff.toLocaleString() + '원 ' + (down ? '인하' : '인상') + '</span>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function groupSum(key) {
+    var g = groups[key];
+    var product = g.items.reduce(function (acc, i) { return i.selected ? acc + i.now * i.qty : acc; }, 0);
+    var selectedCount = g.items.filter(function (i) { return i.selected; }).length;
+    // 선택된 상품이 없으면 배송비 0 (cartItem.tsx:72-81과 동일 판단 — 금액이 아니라 선택 개수로)
+    var ship = selectedCount === 0 ? 0 : g.shippingFee;
+    return { product: product, ship: ship, total: product + ship };
+  }
+
+  function render() {
+    rowsA.innerHTML = groups.A.items.map(function (i) { return rowHtml(i, 'A'); }).join('');
+    rowsB.innerHTML = groups.B.items.map(function (i) { return rowHtml(i, 'B'); }).join('');
+
+    var a = groupSum('A'), b = groupSum('B');
+    document.getElementById('c-gA-product').textContent = won(a.product);
+    document.getElementById('c-gA-ship').textContent = won(a.ship);
+    document.getElementById('c-gA-total').textContent = won(a.total);
+    document.getElementById('c-gB-product').textContent = won(b.product);
+    document.getElementById('c-gB-total').textContent = won(b.total);
+    document.getElementById('c-total').textContent = won(a.total + b.total);
+    document.getElementById('c-totalProduct').textContent = won(a.product + b.product);
+    document.getElementById('c-totalShip').textContent = won(a.ship + b.ship);
+
+    var items = allItems();
+    var selected = items.filter(function (i) { return i.selected; });
+    document.getElementById('c-allSelectLabel').textContent =
+      '전체 선택 (' + selected.length + '/' + items.length + ')';
+    document.getElementById('c-allSelect').classList.toggle('on', selected.length === items.length && items.length > 0);
+
+    // 그룹 체크박스
+    ['A', 'B'].forEach(function (key) {
+      var box = document.querySelector('[data-group="' + key + '"]');
+      if (!box) return;
+      var g = groups[key].items;
+      box.classList.toggle('on', g.length > 0 && g.every(function (i) { return i.selected; }));
+    });
+
+    // CTA
+    cta.disabled = selected.length === 0;
+    cta.textContent = selected.length === 0 ? '상품을 선택해주세요' : '구매하기';
+
+    // 변동 요약 안내
+    var changed = changedItems();
+    summaryRegion.classList.toggle('hidden', changed.length === 0);
+    if (changed.length > 0) {
+      var hasUp = changed.some(function (i) { return i.now > i.base; });
+      summaryPill.classList.toggle('red', hasUp);
+      summaryPill.classList.toggle('blue', !hasUp);
+      // NoticeBox의 pill은 UNAVAILABLE_ADDRESS만 RedLineInfoIconSVG, 나머지는 BlueLineInfoIconSVG를
+      // 쓴다(noticeBox.tsx:73-78). 목업에서는 아이콘 stroke만 토큰 값으로 맞바꿔 같은 분기를 재현한다.
+      summaryPill.querySelector('svg path').setAttribute('stroke', hasUp ? '#F04438' : '#2E90FA');
+      summaryText.textContent = hasUp
+        ? '담은 뒤 가격이 바뀐 상품 ' + changed.length + '개가 있어요'
+        : '가격이 내려간 상품 ' + changed.length + '개가 있어요';
+    }
+
+    bindRows();
+  }
+
+  function bindRows() {
+    document.querySelectorAll('[data-toggle]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var id = Number(el.dataset.toggle);
+        allItems().forEach(function (i) { if (i.id === id) i.selected = !i.selected; });
+        render();
+      });
+    });
+    document.querySelectorAll('[data-del]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var id = Number(el.dataset.del);
+        ['A', 'B'].forEach(function (k) {
+          groups[k].items = groups[k].items.filter(function (i) { return i.id !== id; });
+        });
+        render();
+        showToast('장바구니에서 삭제했어요');
+      });
+    });
+    document.querySelectorAll('[data-step]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var id = Number(el.dataset.id);
+        var dir = el.dataset.step;
+        allItems().forEach(function (i) {
+          if (i.id !== id) return;
+          if (dir === 'DECREASE') {
+            if (i.qty <= 1) { showToast('최소 수량은 1개예요'); return; }
+            i.qty -= 1;
+          } else {
+            i.qty += 1;
+          }
+        });
+        render();
+      });
+    });
+    document.querySelectorAll('[data-group]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var key = el.dataset.group;
+        var next = !groups[key].items.every(function (i) { return i.selected; });
+        groups[key].items.forEach(function (i) { i.selected = next; });
+        render();
+      });
+    });
+  }
+
+  function openSheet(mode) {
+    sheetMode = mode;
+    var list = mode === 'ORDER'
+      ? changedItems().filter(function (i) { return i.selected && i.now > i.base; })
+      : changedItems();
+    sheetRows.innerHTML = list.map(sheetRowHtml).join('');
+
+    var delta = list.reduce(function (acc, i) { return acc + (i.now - i.base) * i.qty; }, 0);
+    var up = delta > 0;
+    sheetSum.classList.toggle('red', up);
+    sheetSum.classList.toggle('blue', !up);
+    sheetSum.querySelector('p:first-child').textContent = mode === 'ORDER' ? '담은 시점보다' : '합계 변동';
+    sheetSumValue.textContent = (delta > 0 ? '+' : '') + delta.toLocaleString() + '원';
+    sheetSumValue.style.color = up ? 'var(--red500)' : 'var(--blue500)';
+
+    if (mode === 'ORDER') {
+      sheetTitle.textContent = '가격이 오른 상품이 있어요';
+      sheetDesc.textContent = '지금 가격으로 주문을 진행할까요?';
+      sheetSecondary.textContent = '장바구니로 돌아가기';
+      sheetSecondary.className = 'btn s-xl c-greyOutLine';
+      sheetPrimary.textContent = '주문 진행';
+    } else {
+      sheetTitle.textContent = '가격이 바뀐 상품이 있어요';
+      sheetDesc.textContent = '담은 가격과 지금 가격을 확인해 주세요.';
+      sheetSecondary.textContent = '인상 상품 빼기';
+      sheetSecondary.className = 'btn s-xl c-whiteWithLine';
+      sheetPrimary.textContent = '확인';
+      var hasUp = changedItems().some(function (i) { return i.now > i.base; });
+      sheetSecondary.classList.toggle('hidden', !hasUp);
+    }
+    backdrop.classList.add('open');
+    sheet.classList.add('open');
+  }
+  function closeSheet() {
+    backdrop.classList.remove('open');
+    sheet.classList.remove('open');
+  }
+
+  summaryPill.addEventListener('click', function () { openSheet('REVIEW'); });
+  backdrop.addEventListener('click', closeSheet);
+
+  cta.addEventListener('click', function () {
+    var upSelected = allItems().filter(function (i) { return i.selected && i.now > i.base; });
+    if (upSelected.length > 0) { openSheet('ORDER'); return; }
+    showToast('주문 화면으로 이동합니다');
+  });
+
+  sheetPrimary.addEventListener('click', function () {
+    if (sheetMode === 'ORDER') {
+      closeSheet();
+      showToast('현재 가격으로 주문 화면으로 이동합니다');
+      return;
+    }
+    // 확인 = 기준가를 현재가로 갱신 → 변동 표기·요약 안내가 사라진다
+    allItems().forEach(function (i) { i.base = i.now; });
+    closeSheet();
+    render();
+    showToast('가격 변동을 확인했어요');
+  });
+
+  sheetSecondary.addEventListener('click', function () {
+    if (sheetMode === 'ORDER') { closeSheet(); return; }
+    allItems().forEach(function (i) { if (i.now > i.base) i.selected = false; });
+    closeSheet();
+    render();
+    showToast('가격이 오른 상품을 선택에서 제외했어요');
+  });
+
+  document.getElementById('c-allSelect').addEventListener('click', function () {
+    var items = allItems();
+    var next = !items.every(function (i) { return i.selected; });
+    items.forEach(function (i) { i.selected = next; });
+    render();
+  });
+
+  document.getElementById('c-multiDelete').addEventListener('click', function () {
+    var selected = allItems().filter(function (i) { return i.selected; });
+    if (selected.length === 0) { showToast('삭제할 상품을 선택해주세요'); return; }
+    ['A', 'B'].forEach(function (k) {
+      groups[k].items = groups[k].items.filter(function (i) { return !i.selected; });
+    });
+    render();
+    showToast('선택한 상품을 삭제했어요');
+  });
+
+  document.getElementById('c-reset').addEventListener('click', function (e) {
+    e.preventDefault();
+    groups = JSON.parse(JSON.stringify(SEED));
+    closeSheet();
+    render();
+    showToast('초기 상태로 되돌렸어요');
+  });
+
+  render();
+})();
+
+/* =========================================================================
+   화면 3 — 알림 수신: 푸시 재생 / 웹 fallback 확인
+   ========================================================================= */
+(function () {
+  var push = document.getElementById('p-push');
+  document.getElementById('p-replay').addEventListener('click', function (e) {
+    e.preventDefault();
+    push.classList.remove('show');
+    setTimeout(function () { push.classList.add('show'); }, 200);
+  });
+
+  var toast = document.getElementById('w-toast');
+  var toastMsg = document.getElementById('w-toastMsg');
+  document.getElementById('w-checkBtn').addEventListener('click', function () {
+    toastMsg.textContent = '변동 내역 확인 시트를 엽니다 (화면 2 참조)';
+    toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { toast.classList.remove('show'); }, 2200);
+  });
+})();
+
+/* =========================================================================
+   화면 4 — 설정: 방향별 수신 토글 / 경고 문구 / 권한 안내
+   ========================================================================= */
+(function () {
+  var toast = document.getElementById('s-toast');
+  var toastMsg = document.getElementById('s-toastMsg');
+  var warn = document.getElementById('s-warn');
+  var permBlock = document.getElementById('s-permBlock');
+
+  var LABEL = { marketing: '마케팅 수신 동의', down: '장바구니 가격 인하 알림', up: '장바구니 가격 인상 알림' };
+
+  function showToast(msg) {
+    toastMsg.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { toast.classList.remove('show'); }, 2200);
+  }
+
+  function syncWarn() {
+    var down = document.querySelector('[data-switch="down"]').classList.contains('on');
+    var up = document.querySelector('[data-switch="up"]').classList.contains('on');
+    warn.classList.toggle('hidden', down || up);
+  }
+
+  document.querySelectorAll('[data-switch]').forEach(function (sw) {
+    sw.addEventListener('click', function () {
+      var on = !sw.classList.contains('on');
+      sw.classList.toggle('on', on);
+      showToast(LABEL[sw.dataset.switch] + (on ? '이 설정되었어요' : '이 해제되었어요'));
+      syncWarn();
+    });
+  });
+
+  document.getElementById('s-permBtn').addEventListener('click', function () {
+    permBlock.classList.add('hidden');
+    showToast('알림 권한이 허용되었어요');
+  });
+
+  document.getElementById('s-togglePerm').addEventListener('click', function (e) {
+    e.preventDefault();
+    var hidden = permBlock.classList.toggle('hidden');
+    this.textContent = hidden ? 'OS 푸시 권한 꺼진 상태로 보기' : 'OS 푸시 권한 허용 상태로 보기';
+  });
+
+  syncWarn();
+})();
+</script>
+
+
+<!-- ================= 우측 플로팅 디스크립션 패널 =================
+     화면 아래 .screen-desc 가 원본이고, 이 패널은 현재 보고 있는 화면의
+     디스크립션을 복제해 보여준다. 토글로 접었다 펼 수 있다. -->
+<aside class="desc-panel" id="descPanel">
+  <div class="desc-panel__head">
+    <span class="desc-panel__label">디스크립션</span>
+    <span class="desc-panel__screen" id="descPanelScreen">—</span>
+    <button class="desc-panel__toggle" id="descPanelToggle" type="button" aria-expanded="true">접기</button>
+  </div>
+  <div class="desc-panel__body" id="descPanelBody"></div>
+</aside>
+
+<script>
+  // ---- 우측 플로팅 디스크립션 패널 ----
+  // 화면 아래 .screen-desc(원본)를 복제해 패널에 띄운다. 원본은 CSS로 숨겨져 있다.
+  (function initDescPanel() {
+    const panel = document.getElementById('descPanel');
+    const body = document.getElementById('descPanelBody');
+    const screenLabel = document.getElementById('descPanelScreen');
+    const toggle = document.getElementById('descPanelToggle');
+    const blocks = Array.from(document.querySelectorAll('.screen-block'));
+    if (!panel || !blocks.length) return;
+
+    let activeId = null;
+    function render(block) {
+      if (!block || block.id === activeId) return;
+      activeId = block.id;
+      const num = block.querySelector('.screen-num');
+      const title = block.querySelector('.screen-title h3');
+      screenLabel.textContent =
+        (num ? num.textContent + ' · ' : '') + (title ? title.textContent.trim() : '');
+      const desc = block.querySelector('.screen-desc');
+      body.innerHTML = '';
+      if (desc) body.appendChild(desc.cloneNode(true));
+      body.scrollTop = 0;
+    }
+
+    // 뷰포트에서 가장 많이 보이는 화면 블록을 활성으로 삼는다
+    const ratios = new Map();
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((e) => ratios.set(e.target, e.intersectionRatio));
+      let best = null, bestRatio = 0;
+      ratios.forEach((r, el) => { if (r > bestRatio) { bestRatio = r; best = el; } });
+      if (best) render(best);
+    }, { threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] });
+    blocks.forEach((b) => observer.observe(b));
+
+    render(blocks[0]);
+
+    toggle.addEventListener('click', () => {
+      const collapsed = panel.classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '펼치기' : '접기';
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+  })();
+</script>
+</body>
+</html>

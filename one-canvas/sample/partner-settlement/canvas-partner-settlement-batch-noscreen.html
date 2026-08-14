@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>통합 캔버스 샘플 — 정산 배치 재계산 (화면 없음)</title>
+<meta name="canvas-updated-at" content="2026-07-31T12:31:41+09:00">
+<style>
+  :root {
+    --border: #e5e7eb;
+    --border-strong: #d2d6db;
+    --bg-soft: #f9fafb;
+    --text-900: #111927;
+    --text-700: #384250;
+    --text-600: #4d5761;
+    --text-500: #6c737f;
+    --blue: #2e90fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 0 24px 80px;
+    line-height: 1.6;
+    color: #1c1f24;
+  }
+  h1 { font-size: 22px; border-bottom: 2px solid #1c1f24; padding-bottom: 12px; }
+  h2 {
+    font-size: 17px;
+    margin-top: 48px;
+    padding: 8px 12px;
+    background: var(--bg-soft);
+    border-left: 4px solid var(--blue);
+  }
+  .meta { color: var(--text-500); font-size: 13px; margin-bottom: 16px; }
+  .noscreen-note {
+    font-size: 13px; color: var(--text-700);
+    background: var(--bg-soft); border: 1px dashed var(--border-strong);
+    border-radius: 8px; padding: 12px 16px; margin: 16px 0 0;
+  }
+  table.spec { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.spec th, table.spec td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.spec th { background: var(--bg-soft); width: 160px; }
+  ul.ref-list { list-style: disc; margin: 8px 0 0 20px; padding: 0; font-size: 14px; color: var(--text-700); }
+  ul.ref-list li { margin-bottom: 6px; }
+  ul.ref-list a { color: var(--blue); }
+  ul.story-list { padding-left: 20px; }
+  ul.story-list li { margin-bottom: 12px; font-size: 14px; color: var(--text-700); }
+  ul.story-list .story-name { display: block; font-weight: 600; color: var(--text-900); margin-bottom: 2px; }
+  ul.story-list .gwt { margin: 4px 0 0; padding-left: 16px; }
+  ul.story-list .gwt li { margin-bottom: 4px; font-size: 13px; }
+  ul.story-list .gwt b { color: var(--text-900); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>정산 배치 재계산 (Sample — 화면 없음)</h1>
+<p class="meta">문서 종류: 통합캔버스 샘플 · 작성 기준: one-canvas/one-canvas-rule.md B(화면 없는 경우) 참조</p>
+<p class="noscreen-note">이 문서는 화면(UI) 없이 진행되는 백엔드 배치 개발 사례이다. one-canvas-rule.md의 B 분기에 따라 <strong>도메인 / 에픽 / 유저스토리</strong> 3개 소제목만으로 구성하며(요구사항은 에픽/유저스토리로 분류해 서술), 화면(디자인)·디스크립션(화면당) 섹션과 컴포넌트 태깅은 작성하지 않는다. 유저스토리는 스토리 이름 + Given-When-Then(GWT) 시나리오로 쓰되, 사용자 대신 시스템/배치가 주체가 된다(GWT의 When도 시스템 이벤트가 주체).</p>
+
+<!-- ================= 도메인 ================= -->
+<h2>도메인</h2>
+<table class="spec">
+  <tr><th>도메인</th><td>settlement (정산)</td></tr>
+</table>
+
+<!-- ================= 참고 자료 ================= -->
+<h2>참고 자료</h2>
+<ul class="ref-list">
+  <li><strong>정산 배치 재계산 정책 노션 문서</strong> — <a href="https://notion.so/xxxx-settlement-batch-recalc-policy" target="_blank" rel="noopener">https://notion.so/xxxx-settlement-batch-recalc-policy</a> — 재계산 대상 판정 기준 및 예외 케이스 정리</li>
+  <li><strong>반품 확정 이벤트 스펙 컨플루언스</strong> — <a href="https://confluence.example.com/pages/xxxx-return-confirmed-event" target="_blank" rel="noopener">https://confluence.example.com/pages/xxxx-return-confirmed-event</a> — 이벤트 페이로드 필드 정의</li>
+</ul>
+
+<!-- ================= 에픽 ================= -->
+<h2>에픽</h2>
+<table class="spec">
+  <tr><th>에픽</th><td>epic-partner-settlement-batch-recalc (정산 배치 재계산)</td></tr>
+  <tr><th>목적</th><td>정산 마감 후 발생하는 반품·환불 건을 자동으로 재계산해 CS 문의와 수기 정산 오류를 줄인다.</td></tr>
+  <tr><th>주요 범위 (In-Scope)</th><td>반품 확정 이벤트 구독, 정산 금액 재계산 로직, 정산 상태(재계산완료/보류/실패) 갱신, 처리 로그 적재, 운영 담당자 요약 알림</td></tr>
+  <tr><th>제외 범위 (Out-of-Scope)</th><td>정산 금액 수동 조정 화면(별도 에픽으로 이관), 파트너 대상 알림 발송(후속 에픽에서 처리)</td></tr>
+  <tr><th>완료 기준</th><td>정산 마감 후 반품이 확정된 건에 대해 배치가 자동으로 재계산을 수행하고 정산 상태가 갱신되며, 실패 건은 다음 배치 주기에 재시도되고 운영 담당자에게 결과가 통보되어야 한다.</td></tr>
+</table>
+
+<!-- ================= 유저스토리 ================= -->
+<h2>유저스토리</h2>
+<ul class="story-list">
+  <li>
+    <span class="story-name">story-settlement-recalc-trigger (정산 배치 시스템이 반품 확정 건을 재계산 대상으로 자동 식별한다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 정산이 마감된 정산 건이 있고, <b>When</b> 그 건에 대한 반품 확정 이벤트를 배치가 감지하면, <b>Then</b> 해당 정산 건을 재계산 대상으로 식별해 재계산 큐에 등록한다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-settlement-recalc-execute (정산 배치 시스템이 재계산 대상 건의 정산 금액을 다시 산출한다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 재계산 큐에 등록된 정산 건이 있고, <b>When</b> 배치가 재계산을 실행하면, <b>Then</b> 반품 금액을 반영해 정산 금액을 다시 산출하고 정산 상태를 재계산완료로 갱신한다.</li>
+      <li><b>Given</b> 재계산 대상 건이 있고, <b>When</b> 재계산 실행 중 오류가 발생하면, <b>Then</b> 해당 건을 보류/실패 상태로 두고 다음 배치 주기에 재시도한다.</li>
+    </ul>
+  </li>
+  <li>
+    <span class="story-name">story-settlement-recalc-notify (운영 담당자가 배치 재계산 결과를 요약해서 통보받는다)</span>
+    <ul class="gwt">
+      <li><b>Given</b> 한 배치 주기의 재계산이 끝났고, <b>When</b> 배치 주기가 종료되면, <b>Then</b> 성공·보류·실패 건수를 요약해 운영 담당자에게 통보한다.</li>
+    </ul>
+  </li>
+</ul>
+
+</body>
+</html>
